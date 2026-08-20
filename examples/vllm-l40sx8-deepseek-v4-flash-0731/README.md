@@ -32,7 +32,7 @@ sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/vllm
 `uv` comes from [Provisioning the host](../../README.md#tooling). The rest is specific to this build, installed once per host as your normal user:
 
 ```sh
-# the interpreter this build and the runtime venv use
+# the interpreter this build uses; the runtime venv gets its own copy later
 uv python install 3.12
 
 # rust, needed by the vLLM build
@@ -94,13 +94,20 @@ The fork tags its releases as `v<version>-g<hash>-cu130-sm89`, which setuptools-
 
 ### Runtime virtualenv
 
-The virtualenv is created at its final path — a venv bakes absolute paths into its scripts, so it cannot be built elsewhere and moved:
+The virtualenv is created at its final path — a venv bakes absolute paths into its scripts, so it cannot be built elsewhere and moved.
+
+The interpreter it links to has to be readable by `llm-serv`. A uv-managed Python installed under `sudo` lands in `/root/.local/share/uv/python`, which the service account cannot traverse; the server then dies with `bad interpreter: Permission denied`. Put it somewhere shared instead:
 
 ```sh
-sudo env "PATH=$PATH" uv venv --python 3.12 --seed /opt/llm-serv/vllm/.venv
+sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
+  uv python install 3.12
+sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
+  uv venv --python 3.12 --seed /opt/llm-serv/vllm/.venv
 ```
 
-Install the base environment from the fork's release wheels, then overwrite vLLM itself with the wheel just compiled:
+A distro `python3.12` works too — `uv venv --python /usr/bin/python3.12 …` — as long as it matches the `cp312` wheels.
+
+Install the base environment from the fork's release wheels, then overwrite vLLM itself with the wheel just compiled. The release wheel has to go in first: it is what pulls vLLM's dependency tree, which the final `--no-deps` install deliberately leaves alone so the pinned versions survive.
 
 ```sh
 gh release download --repo yhfgyyf/vllm-deepseek-v4-sm89 \
@@ -112,6 +119,8 @@ sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
   torch==2.11.0 flashinfer-cubin==0.6.13 --torch-backend=cu130
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
   /tmp/vllm-sm89-release/flashinfer_python-0.6.14*sm89*.whl
+sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
+  /tmp/vllm-sm89-release/vllm-*.cu130-cp312-cp312-linux_x86_64.whl --torch-backend=cu130
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
   --force-reinstall --no-deps ./vllm-deepseek-v4-sm89/dist/vllm-*.cu130-*.whl
 
