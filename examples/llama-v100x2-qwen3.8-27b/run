@@ -34,8 +34,9 @@ MODEL_FILE="unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q8_K_XL.gguf"
 MMPROJ_FILE="unsloth/Qwen3.8-27B-GGUF/mmproj-F16.gguf"
 MODEL_ALIAS="qwen3.8-27b"
 
-HOST="0.0.0.0"
-PORT="8000"
+# Listen address; both may be overridden from the env file
+HOST="${LLM_SERV_HOST:-0.0.0.0}"
+PORT="${LLM_SERV_PORT:-8000}"
 
 # Context and parallel slots configuration (2 slots * 256k tokens)
 N_PARALLEL=2

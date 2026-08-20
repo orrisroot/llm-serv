@@ -40,8 +40,9 @@ MODEL_DIR="/opt/llm-serv/models"
 MODEL_PATH="deepseek-ai/DeepSeek-V4-Flash-0731"
 MODEL_ALIAS="deepseek-v4-flash-0731"
 
-HOST="0.0.0.0"
-PORT="8000"
+# Listen address; both may be overridden from the env file
+HOST="${LLM_SERV_HOST:-0.0.0.0}"
+PORT="${LLM_SERV_PORT:-8000}"
 
 # Launch vLLM with 8-way tensor parallelism, DSA sparse attention and
 # dspark speculative decoding

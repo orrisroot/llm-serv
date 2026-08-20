@@ -101,11 +101,12 @@ Running `systemctl start llm-serv@<instance>` expands `%i` in the template unit 
 | Working directory | `/opt/llm-serv/<instance>/` |
 | Entry point | `/opt/llm-serv/<instance>/run` |
 | Environment file | `/etc/llm-serv/<instance>.env` (prefixed with `-`, so it is optional) |
+| Listen address | `LLM_SERV_HOST` / `LLM_SERV_PORT` in that env file, defaulting to `0.0.0.0:8000` |
 | stdout / stderr | `/var/log/llm-serv/<instance>-stdout.log` / `-stderr.log` |
 | Engine binary | `/opt/llm-serv/<instance>/bin/` (convention only; the path is referenced from `run`) |
 | `$HOME` | `/var/lib/llm-serv/<instance>/` — created by systemd, where engines put their caches |
 
-`<instance>` is an arbitrary identifier — an engine name (`llama`) or an engine-plus-model name (`llama-qwen3`) both work. To run multiple configurations of the same engine side by side, give them distinct instance names and assign separate ports.
+`<instance>` is an arbitrary identifier — an engine name (`llama`) or an engine-plus-model name (`llama-qwen3`) both work. To run multiple configurations side by side, give them distinct instance names and set `LLM_SERV_PORT=` in each env file.
 
 Services run as the dedicated `llm-serv` user, so model files and engine binaries must be readable by that user.
 
@@ -114,7 +115,7 @@ Services run as the dedicated `llm-serv` user, so model files and engine binarie
 1. Copy the closest match from `examples/` and adjust `run` — model paths, GPU split, port, and so on.
 2. Create the instance directory: `sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/<instance>`.
 3. Install `run` to `/opt/llm-serv/<instance>/run` (`0750 llm-serv:llm-serv`).
-4. If the engine needs an API key or similar, create `/etc/llm-serv/<instance>.env` (`0640 llm-serv:llm-serv`).
+4. Create `/etc/llm-serv/<instance>.env` (`0640 llm-serv:llm-serv`) for the API key, and for `LLM_SERV_HOST`/`LLM_SERV_PORT` if the defaults do not suit.
 5. Start it with `sudo systemctl enable --now llm-serv@<instance>`. No `daemon-reload` is needed, since the unit itself is unchanged.
 
 To keep the configuration in this repository as well, add it under `examples/<engine>-<hardware>-<model>/` and document its assumptions — GPU layout, CUDA version, model, and how the engine binary was built — in a `README.md` alongside it.

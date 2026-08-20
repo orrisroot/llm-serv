@@ -221,7 +221,7 @@ sudo systemctl restart llm-serv@llama
 
 **Update the model.** Download alongside the existing files, point `run` at the new filename, restart. The old weights can be removed once the new ones are confirmed working.
 
-**Run a second configuration.** Repeat from step 4 with a different instance name and a different `PORT` in its `run`. The base install from steps 1–3 is shared.
+**Run a second configuration.** Repeat from step 4 with a different instance name, setting `LLM_SERV_PORT=` in its env file. The base install from steps 1–3 is shared.
 
 **Remove an instance.**
 
@@ -246,6 +246,6 @@ Read the exit status from `systemctl status llm-serv@<instance>`. systemd's own 
 | `start request repeated too quickly` | 3 failures within 300s tripped the rate limit | Fix the cause, then `sudo systemctl reset-failed llm-serv@<instance>` |
 | CUDA out of memory during load | Context or split too large for 64 GB | Lower `-c`, or retune `-ts` in `run` |
 | Startup appears to hang | Large models take minutes to load, and there is no start timeout | Watch `<instance>-stderr.log` until the listen line appears |
-| `Address already in use` | Another instance holds the port | Change `PORT` in `run` |
+| `Address already in use` | Another instance holds the port | Set `LLM_SERV_PORT=` in `/etc/llm-serv/<instance>.env` |
 
 Logs live in `/var/log/llm-serv/<instance>-{stdout,stderr}.log`, not in the journal. `journalctl -u llm-serv@<instance>` only shows start/stop events.

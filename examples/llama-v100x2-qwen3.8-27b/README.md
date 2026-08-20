@@ -137,4 +137,4 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 
 `run` validates `LLAMA_API_KEY` at startup and exits if it is unset, so the server is never exposed unauthenticated.
 
-It binds to `0.0.0.0`. If the server should not be reachable from outside the host, restrict port 8000 at the firewall or change `HOST` in `run` to `127.0.0.1`.
+It binds to `0.0.0.0:8000` by default. Both are overridable from `/etc/llm-serv/<instance>.env` without touching `run` — set `LLM_SERV_HOST=127.0.0.1` to keep it on the loopback, or `LLM_SERV_PORT=` to move it out of the way of another instance.
