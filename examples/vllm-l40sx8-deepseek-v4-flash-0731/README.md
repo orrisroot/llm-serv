@@ -159,7 +159,7 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 | Flag | Value | Rationale |
 | --- | --- | --- |
 | `--tensor-parallel-size 8` | 8 | One rank per L40S; the model does not fit on fewer |
-| `--gpu-memory-utilization 0.85` | 0.85 | Leaves headroom on each card for activation spikes and the NCCL buffers |
+| `--gpu-memory-utilization 0.88` | 0.88 | Measured ceiling on this host — 0.90 fails, 0.88 holds. The remainder absorbs activation spikes and the NCCL buffers |
 | `--max-model-len 524288` | 512k | Context length per sequence |
 | `--max-num-seqs 16` | 16 | Concurrent sequences, bounded by KV cache at this context length |
 | `--max-num-batched-tokens 2048` | 2048 | Caps the prefill chunk, keeping decode latency stable under long-prompt load |
