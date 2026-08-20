@@ -25,6 +25,7 @@ examples/                               ← Reference configurations, meant to b
     README.md                             Assumptions and rationale for this setup
     run                                   Launch script
     env.example                           Environment file template
+  vllm-l40sx8-deepseek-v4-flash-0731/
 ```
 
 Every file under `etc/` is installed to the identical path on the host, and holds the engine-independent base. Engine-specific pieces live under `examples/` and are copied into place at deploy time.
@@ -65,6 +66,17 @@ sudo install -d -m 0750 -o root     -g llm-serv /etc/llm-serv
 ```
 
 The log directory is created by `tmpfiles.d` in the next step.
+
+### Tooling
+
+Every example uses [`uv`](https://docs.astral.sh/uv/) — to fetch models with `uvx hf download`, and in some cases to build the engine's runtime environment. Install it for the account that runs the setup, not for root:
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+```
+
+It lands in `~/.local/bin`, which `sudo` drops from the path. Commands that write into `/opt` therefore run it as `sudo env "PATH=$PATH" uv ...`.
 
 ### Base files
 
@@ -123,7 +135,7 @@ These are applied uniformly to every instance by the template unit.
 
 There is no start timeout: a slow model load simply takes as long as it takes.
 
-The template sets no memory cap. With the model resident in VRAM, the only host memory of any size is the memory-mapped weight file, and those pages are reclaimable — a `MemoryMax=` would mostly add a way for the cgroup OOM killer to kill a healthy server. On a shared host where the engine must be boxed in, add one per instance.
+The template sets no memory cap. Weights and KV cache live in VRAM, so what a running instance holds in host memory is process overhead plus the memory-mapped weight file, and those file pages are reclaimable — a `MemoryMax=` would mostly add a way for the cgroup OOM killer to kill a healthy server. On a shared host where the engine must be boxed in, add one per instance.
 
 ### Per-instance overrides
 
@@ -177,3 +189,4 @@ The journal only records service start/stop events; inference server output is n
 | Directory | Engine | Hardware | Model |
 | --- | --- | --- | --- |
 | [`examples/llama-v100x2-qwen3.8-27b`](examples/llama-v100x2-qwen3.8-27b) | llama.cpp | Tesla V100 32GB ×2 / CUDA 12.8 | Qwen3.8 27B (GGUF, UD-Q8_K_XL, multimodal) |
+| [`examples/vllm-l40sx8-deepseek-v4-flash-0731`](examples/vllm-l40sx8-deepseek-v4-flash-0731) | vLLM (`vllm-deepseek-v4-sm89` fork) | L40S ×8 / CUDA 13.0 | DeepSeek V4 Flash 0731 |

@@ -83,8 +83,6 @@ sudo env "PATH=$PATH" uvx hf download unsloth/Qwen3.8-27B-GGUF \
   --local-dir /opt/llm-serv/models/unsloth/Qwen3.8-27B-GGUF/
 ```
 
-`env "PATH=$PATH"` keeps `uvx` reachable, since `sudo` drops `~/.local/bin` from the path.
-
 The resulting layout, which `run` refers to by these exact paths:
 
 ```

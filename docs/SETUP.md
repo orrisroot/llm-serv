@@ -14,9 +14,17 @@ Commands that change the system are shown with `sudo`; everything else runs as y
 | NVIDIA driver, GPUs visible | `nvidia-smi` |
 | CUDA toolkit matching the example (12.8) | `ls /usr/local/cuda-12.8` |
 | Build toolchain (`git`, `cmake`, `gcc`) | `cmake --version` |
-| `uv` (for `uvx hf download`) | `uvx --version` |
 
 The engine is built from source, so the toolchain is needed on the host itself — or on a machine with the same CUDA version, from which only the resulting binary is copied over.
+
+`uv` is not assumed to be present. Install it for your own account — every example uses it to fetch models, and some to build the engine:
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+```
+
+Because it lives in `~/.local/bin`, which `sudo` drops from the path, the steps that write into `/opt` invoke it as `sudo env "PATH=$PATH" uv ...`.
 
 ## 1. Service account
 

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instance identity, derived from where this script is installed:
+# /opt/llm-serv/<instance>/run
+INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE="$(basename -- "${INSTANCE_DIR}")"
+
+# CUDA and virtualenv environment configuration
+export CUDA_HOME="/usr/local/cuda-13.0"
+export VIRTUAL_ENV="${INSTANCE_DIR}/.venv"
+export PATH="${CUDA_HOME}/bin:${VIRTUAL_ENV}/bin:${PATH}"
+export LD_LIBRARY_PATH="${VIRTUAL_ENV}/lib/python3.12/site-packages/PyNvVideoCodec:${VIRTUAL_ENV}/lib:${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+# Shared-memory transport is unusable for the eight ranks on this host
+export NCCL_SHM_DISABLE=1
+
+# FlashInfer is pinned to the build this fork ships
+export FLASHINFER_DISABLE_VERSION_CHECK=1
+
+# Load environment configuration file if present
+ENV_FILE="/etc/llm-serv/${INSTANCE}.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+fi
+
+# Ensure API key is configured. It reaches the server through the environment
+# (exported above), never as a command-line flag, so it stays out of ps output.
+if [[ -z "${VLLM_API_KEY:-}" ]]; then
+  echo "Error: VLLM_API_KEY is not set." >&2
+  exit 1
+fi
+
+# Server and model configuration
+VLLM_BIN="${VIRTUAL_ENV}/bin/vllm"
+MODEL_DIR="/opt/llm-serv/models"
+MODEL_PATH="deepseek-ai/DeepSeek-V4-Flash-0731"
+MODEL_ALIAS="deepseek-v4-flash-0731"
+
+HOST="0.0.0.0"
+PORT="8000"
+
+# Launch vLLM with 8-way tensor parallelism, DSA sparse attention and
+# dspark speculative decoding
+exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
+  --served-model-name "${MODEL_ALIAS}" \
+  --trust-remote-code \
+  --tensor-parallel-size 8 \
+  --gpu-memory-utilization 0.85 \
+  --max-model-len 524288 \
+  --max-num-seqs 16 \
+  --max-num-batched-tokens 2048 \
+  --kv-cache-dtype fp8_ds_mla \
+  --block-size 256 \
+  --attention-backend FLASHINFER_MLA_SPARSE_DSV4 \
+  --tool-call-parser deepseek_v4 \
+  --enable-auto-tool-choice \
+  --reasoning-parser deepseek_v4 \
+  --speculative-config '{"method":"dspark","num_speculative_tokens":6,"draft_sample_method":"greedy"}' \
+  --host "${HOST}" \
+  --port "${PORT}"
