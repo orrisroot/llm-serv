@@ -227,6 +227,7 @@ sudo systemctl restart llm-serv@llama
 
 ```sh
 sudo systemctl disable --now llm-serv@llama
+sudo systemctl clean --what=state llm-serv@llama
 sudo rm -rf /opt/llm-serv/llama /etc/llm-serv/llama.env
 sudo rm -f  /var/log/llm-serv/llama-*
 ```

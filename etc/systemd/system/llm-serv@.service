@@ -20,6 +20,12 @@ User=llm-serv
 Group=llm-serv
 WorkingDirectory=/opt/llm-serv/%i
 
+# Engines cache compiled kernels and model metadata under $HOME, and the
+# service account has no home directory of its own. Point it at a per-instance
+# directory systemd creates and owns.
+StateDirectory=llm-serv/%i
+Environment=HOME=%S/llm-serv/%i
+
 # Engine-specific environment overrides (optional)
 EnvironmentFile=-/etc/llm-serv/%i.env
 

@@ -43,6 +43,7 @@ Directories that only need to exist — `/opt/llm-serv`, `/etc/llm-serv`, `/var/
 | `examples/<name>/env.example` | `/etc/llm-serv/<instance>.env` | `0640 llm-serv:llm-serv` |
 | (untracked) | `/opt/llm-serv/models/` | shared model store |
 | (created by tmpfiles.d) | `/var/log/llm-serv/` | `0750 root:root` |
+| (created by systemd) | `/var/lib/llm-serv/<instance>/` | `0755 llm-serv:llm-serv` |
 
 ## Provisioning the host
 
@@ -102,6 +103,7 @@ Running `systemctl start llm-serv@<instance>` expands `%i` in the template unit 
 | Environment file | `/etc/llm-serv/<instance>.env` (prefixed with `-`, so it is optional) |
 | stdout / stderr | `/var/log/llm-serv/<instance>-stdout.log` / `-stderr.log` |
 | Engine binary | `/opt/llm-serv/<instance>/bin/` (convention only; the path is referenced from `run`) |
+| `$HOME` | `/var/lib/llm-serv/<instance>/` — created by systemd, where engines put their caches |
 
 `<instance>` is an arbitrary identifier — an engine name (`llama`) or an engine-plus-model name (`llama-qwen3`) both work. To run multiple configurations of the same engine side by side, give them distinct instance names and assign separate ports.
 
@@ -131,6 +133,7 @@ These are applied uniformly to every instance by the template unit.
 | `TimeoutStopSec` | 120s | SIGKILL 120 seconds after SIGTERM |
 | `KillMode` | mixed | SIGTERM reaches the engine only, so multi-process engines stop their own workers |
 | `UMask` | 0027 | Log files created `0640` rather than `0644` |
+| `StateDirectory` / `HOME` | `llm-serv/%i` | Gives the home-less service account a writable `$HOME` for engine caches |
 | `After=` | `network-online.target`, `nvidia-persistenced.service` | Start after the GPU driver is initialized |
 
 There is no start timeout: a slow model load simply takes as long as it takes.
