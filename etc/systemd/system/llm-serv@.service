@@ -41,5 +41,9 @@ Restart=on-failure
 RestartSec=10
 TimeoutStopSec=120
 
+# SIGTERM goes to run/the engine only, leaving multi-process engines to shut
+# their workers down themselves; the rest of the cgroup is killed after.
+KillMode=mixed
+
 [Install]
 WantedBy=multi-user.target

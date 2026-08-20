@@ -117,6 +117,7 @@ These are applied uniformly to every instance by the template unit.
 | `Restart` / `RestartSec` | on-failure / 10s | Restart only on abnormal exit |
 | `StartLimitBurst` / `IntervalSec` | 3 / 300s | Give up after 3 failures within 300 seconds |
 | `TimeoutStopSec` | 120s | SIGKILL 120 seconds after SIGTERM |
+| `KillMode` | mixed | SIGTERM reaches the engine only, so multi-process engines stop their own workers |
 | `UMask` | 0027 | Log files created `0640` rather than `0644` |
 | `After=` | `network-online.target`, `nvidia-persistenced.service` | Start after the GPU driver is initialized |
 
