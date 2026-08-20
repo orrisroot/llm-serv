@@ -22,7 +22,7 @@ The host must already be provisioned — service account, shared directories, an
 Pick an instance name — `llama` throughout this document — and create its directory:
 
 ```sh
-install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/llama /opt/llm-serv/llama/bin
+sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/llama /opt/llm-serv/llama/bin
 ```
 
 `run` derives the engine binary and env file paths from its own install location, so any instance name works without editing the script.
@@ -55,7 +55,7 @@ cmake --build llama.cpp/build --config Release -j$(nproc)
 Install the result:
 
 ```sh
-install -m 0755 llama.cpp/build/bin/llama /opt/llm-serv/llama/bin/llama
+sudo install -m 0755 llama.cpp/build/bin/llama /opt/llm-serv/llama/bin/llama
 ```
 
 The CUDA runtime libraries are still linked dynamically, which is why `run` re-exports the same `CUDA_HOME` and `LD_LIBRARY_PATH` at startup. Build and runtime must point at the same CUDA installation.
@@ -67,8 +67,9 @@ The CUDA runtime libraries are still linked dynamically, which is why `run` re-e
 Install this directory's contents into place:
 
 ```sh
-install -o llm-serv -g llm-serv -m 0750 run         /opt/llm-serv/llama/run
-install -o llm-serv -g llm-serv -m 0640 env.example /etc/llm-serv/llama.env   # then replace with the real key
+sudo install -o llm-serv -g llm-serv -m 0750 run         /opt/llm-serv/llama/run
+sudo install -o llm-serv -g llm-serv -m 0640 env.example /etc/llm-serv/llama.env
+sudoedit /etc/llm-serv/llama.env   # replace the placeholder with the real key
 ```
 
 ### Model files
@@ -76,11 +77,13 @@ install -o llm-serv -g llm-serv -m 0640 env.example /etc/llm-serv/llama.env   # 
 Fetch the weights and the vision projector into the shared model store:
 
 ```sh
-uvx hf download unsloth/Qwen3.8-27B-GGUF \
+sudo env "PATH=$PATH" uvx hf download unsloth/Qwen3.8-27B-GGUF \
   Qwen3.8-27B-UD-Q8_K_XL.gguf \
   mmproj-F16.gguf \
   --local-dir /opt/llm-serv/models/unsloth/Qwen3.8-27B-GGUF/
 ```
+
+`env "PATH=$PATH"` keeps `uvx` reachable, since `sudo` drops `~/.local/bin` from the path.
 
 The resulting layout, which `run` refers to by these exact paths:
 
@@ -89,19 +92,19 @@ The resulting layout, which `run` refers to by these exact paths:
 /opt/llm-serv/models/unsloth/Qwen3.8-27B-GGUF/mmproj-F16.gguf
 ```
 
-If the download ran as root, hand the files to the service account:
+Hand the files to the service account:
 
 ```sh
-chown -R llm-serv:llm-serv /opt/llm-serv/models/unsloth
+sudo chown -R llm-serv:llm-serv /opt/llm-serv/models/unsloth
 ```
 
 ### Start
 
 ```sh
-systemctl enable --now llm-serv@llama
+sudo systemctl enable --now llm-serv@llama
 ```
 
-Model loading takes a few minutes; follow it in `/var/log/llm-serv/llama-stderr.log` (root-owned, so use `sudo`).
+Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-serv/llama-stderr.log`.
 
 ## Configuration rationale
 

@@ -45,14 +45,14 @@ Directories that only need to exist — `/opt/llm-serv`, `/etc/llm-serv`, `/var/
 
 ## Provisioning the host
 
-These steps are shared by every instance and only need to be done once.
+These steps are shared by every instance and only need to be done once. They are written for a normal account with `sudo`.
 
 ### Service user
 
 All engines run as a dedicated unprivileged system account with no home directory and no login shell:
 
 ```sh
-useradd --system --no-create-home --shell /usr/sbin/nologin llm-serv
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin llm-serv
 ```
 
 If the NVIDIA device nodes on the host are not world-accessible, add the account to the group that owns `/dev/nvidia*` as well.
@@ -60,8 +60,8 @@ If the NVIDIA device nodes on the host are not world-accessible, add the account
 ### Directories
 
 ```sh
-install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv /opt/llm-serv/models
-install -d -m 0750 -o root     -g llm-serv /etc/llm-serv
+sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv /opt/llm-serv/models
+sudo install -d -m 0750 -o root     -g llm-serv /etc/llm-serv
 ```
 
 The log directory is created by `tmpfiles.d` in the next step.
@@ -69,12 +69,12 @@ The log directory is created by `tmpfiles.d` in the next step.
 ### Base files
 
 ```sh
-install -m 0644 etc/systemd/system/llm-serv@.service /etc/systemd/system/
-install -m 0644 etc/logrotate.d/llm-serv             /etc/logrotate.d/
-install -m 0644 etc/tmpfiles.d/llm-serv.conf         /etc/tmpfiles.d/
+sudo install -m 0644 etc/systemd/system/llm-serv@.service /etc/systemd/system/
+sudo install -m 0644 etc/logrotate.d/llm-serv             /etc/logrotate.d/
+sudo install -m 0644 etc/tmpfiles.d/llm-serv.conf         /etc/tmpfiles.d/
 
-systemd-tmpfiles --create /etc/tmpfiles.d/llm-serv.conf   # creates /var/log/llm-serv now
-systemctl daemon-reload
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/llm-serv.conf   # creates the log dir now
+sudo systemctl daemon-reload
 ```
 
 `systemd-tmpfiles --create` creates the log directory now; later boots handle it automatically. `daemon-reload` is only needed here, when the template unit itself is installed or changed.
@@ -98,10 +98,10 @@ Services run as the dedicated `llm-serv` user, so model files and engine binarie
 ## Adding a new configuration
 
 1. Copy the closest match from `examples/` and adjust `run` — model paths, GPU split, port, and so on.
-2. Create the instance directory: `install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/<instance>`.
+2. Create the instance directory: `sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/<instance>`.
 3. Install `run` to `/opt/llm-serv/<instance>/run` (`0750 llm-serv:llm-serv`).
 4. If the engine needs an API key or similar, create `/etc/llm-serv/<instance>.env` (`0640 llm-serv:llm-serv`).
-5. Start it with `systemctl enable --now llm-serv@<instance>`. No `daemon-reload` is needed, since the unit itself is unchanged.
+5. Start it with `sudo systemctl enable --now llm-serv@<instance>`. No `daemon-reload` is needed, since the unit itself is unchanged.
 
 To keep the configuration in this repository as well, add it under `examples/<engine>-<hardware>-<model>/` and document its assumptions — GPU layout, CUDA version, model, and how the engine binary was built — in a `README.md` alongside it.
 
@@ -129,7 +129,7 @@ The template sets no memory cap. With the model resident in VRAM, the only host 
 Any unit setting can be changed for a single instance without touching the template:
 
 ```sh
-systemctl edit llm-serv@<instance>
+sudo systemctl edit llm-serv@<instance>
 ```
 
 ```ini
