@@ -94,9 +94,7 @@ The fork tags its releases as `v<version>-g<hash>-cu130-sm89`, which setuptools-
 
 ### Runtime virtualenv
 
-The virtualenv is created at its final path — a venv bakes absolute paths into its scripts, so it cannot be built elsewhere and moved.
-
-The interpreter it links to has to be readable by `llm-serv`. A uv-managed Python installed under `sudo` lands in `/root/.local/share/uv/python`, which the service account cannot traverse; the server then dies with `bad interpreter: Permission denied`. Put it somewhere shared instead:
+The virtualenv is created at its final path — a venv bakes absolute paths into its scripts, so it cannot be built elsewhere and moved. Its interpreter has to sit somewhere `llm-serv` can reach, so install that under `/opt/llm-serv` as well:
 
 ```sh
 sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
@@ -104,8 +102,6 @@ sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
 sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
   uv venv --python 3.12 --seed /opt/llm-serv/vllm/.venv
 ```
-
-A distro `python3.12` works too — `uv venv --python /usr/bin/python3.12 …` — as long as it matches the `cp312` wheels.
 
 Install the base environment from the fork's release wheels, then overwrite vLLM itself with the wheel just compiled. The release wheel has to go in first: it is what pulls vLLM's dependency tree, which the final `--no-deps` install deliberately leaves alone so the pinned versions survive.
 
