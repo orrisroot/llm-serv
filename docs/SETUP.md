@@ -2,7 +2,7 @@
 
 End-to-end walkthrough for taking a bare GPU host to a running, verified inference endpoint.
 
-The steps up to and including [Base files](#3-base-files) are shared by every engine and model. Everything after that is per-instance; this guide follows [`examples/llama-v100x2-qwen3.8-27b`](../examples/llama-v100x2-qwen3.8-27b) as the concrete case, using the instance name `llama`. For the reasoning behind each piece of configuration, see the [top-level README](../README.md) and the example's own README.
+Steps 0 to 3 are the same for every engine and model. From [step 4](#4-pick-an-example) on, the work depends on which example you are deploying: this guide gives the shape of each step and the parts that are common, and points at the example for the commands that differ. For the reasoning behind each piece of configuration, see the [top-level README](../README.md).
 
 Commands that change the system are shown with `sudo`; everything else runs as your normal user. Running `sudo -v` first caches the credential so the longer steps do not stop to re-prompt.
 
@@ -12,10 +12,9 @@ Commands that change the system are shown with `sudo`; everything else runs as y
 | --- | --- |
 | systemd | `systemctl --version` |
 | NVIDIA driver, GPUs visible | `nvidia-smi` |
-| CUDA toolkit matching the example (12.8) | `ls /usr/local/cuda-12.8` |
-| Build toolchain (`git`, `cmake`, `gcc`) | `cmake --version` |
+| git | `git --version` |
 
-The engine is built from source, so the toolchain is needed on the host itself — or on a machine with the same CUDA version, from which only the resulting binary is copied over.
+Both examples build their engine from source, so the CUDA toolkit and compilers have to be on the host itself — or on a machine with the same CUDA version, from which only the build output is copied over. Which version, and which extra tools, depends on the example; see the table in [step 4](#4-pick-an-example).
 
 `uv` is not assumed to be present. Install it for your own account — every example uses it to fetch models, and some to build the engine:
 
@@ -72,116 +71,103 @@ sudo logrotate --debug /etc/logrotate.d/llm-serv
 
 Everything above is engine-independent; adding a second engine later reuses all of it.
 
-## 4. Instance directory
+## 4. Pick an example
 
-Pick the instance name — it becomes the `%i` in `llm-serv@<instance>` and determines every per-instance path. This guide uses `llama`.
+Everything from here depends on which example you deploy.
 
-```sh
-sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/llama /opt/llm-serv/llama/bin
-```
+| | [llama.cpp](../examples/llama-v100x2-qwen3.8-27b) | [vLLM](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
+| --- | --- | --- |
+| Hardware | V100 32GB ×2 (sm_70) | L40S ×8 (sm_89) |
+| CUDA | 12.8 | 13.0 |
+| Extra build tools | cmake, gcc | rust, gh, Python 3.12 |
+| Engine artifact | one static binary in `bin/` | a virtualenv in `.venv/` |
+| Model | `unsloth/Qwen3.8-27B-GGUF` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
+| API key variable | `LLAMA_API_KEY` | `VLLM_API_KEY` |
+| Served model name | `qwen3.8-27b` | `deepseek-v4-flash-0731` |
+| Instance name below | `llama` | `vllm` |
 
-## 5. Build the engine
-
-For the V100 example, llama.cpp is compiled for sm_70. Build as your normal user; only the install step needs `sudo`.
-
-```sh
-git clone https://github.com/ggml-org/llama.cpp
-
-export CUDA_HOME=/usr/local/cuda-12.8
-export PATH=${CUDA_HOME}/bin:$PATH
-export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-
-cmake llama.cpp -B llama.cpp/build \
-  -DBUILD_SHARED_LIBS=OFF \
-  -DGGML_CUDA=ON \
-  -DCMAKE_CUDA_ARCHITECTURES=70
-
-cmake --build llama.cpp/build --config Release -j$(nproc)
-```
+The remaining steps write `<instance>` and `<example>` where the values from that table go. Create the instance directory:
 
 ```sh
-sudo install -m 0755 llama.cpp/build/bin/llama /opt/llm-serv/llama/bin/llama
+sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/<instance>
 ```
 
-Confirm the binary runs as the service account. The CUDA runtime is linked dynamically, so the library path has to be given here the same way `run` sets it:
+An example may call for a subdirectory as well — `bin/` for llama.cpp — which its README covers.
 
-```sh
-sudo -u llm-serv env LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64 \
-  /opt/llm-serv/llama/bin/llama --version
-```
+## 5. Install the engine
 
-See the [example README](../examples/llama-v100x2-qwen3.8-27b/README.md#building-the-engine) for what each cmake option buys.
+Neither example uses a prebuilt engine, and the two procedures have almost nothing in common, so each lives with its example:
+
+- [llama.cpp — Building the engine](../examples/llama-v100x2-qwen3.8-27b/README.md#building-the-engine)
+- [vLLM — Building the engine](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#runtime-virtualenv)
+
+Two rules apply to both, and account for most of the failures at this step:
+
+- Build as your normal user. Only the install into `/opt` needs `sudo`.
+- Whatever the engine turns out to be, `llm-serv` must be able to read and execute it **and** everything it resolves at runtime — shared libraries, and for vLLM the Python interpreter the virtualenv links to. Anything left under `/root` is unreachable.
 
 ## 6. Models
 
-The model store is not writable by your account, so the download runs under
-`sudo`. `env "PATH=$PATH"` is needed because `uvx` lives in your own `~/.local/bin`,
-which `sudo` drops from the path:
+The same shape for both: fetch into the shared store under the upstream org and repository name, then hand the files to the service account. The example README gives the exact repository and, for llama.cpp, which files to pick out of it.
 
 ```sh
-sudo env "PATH=$PATH" uvx hf download unsloth/Qwen3.8-27B-GGUF \
-  Qwen3.8-27B-UD-Q8_K_XL.gguf \
-  mmproj-F16.gguf \
-  --local-dir /opt/llm-serv/models/unsloth/Qwen3.8-27B-GGUF/
+sudo env "PATH=$PATH" uvx hf download <org>/<repo> \
+  --local-dir /opt/llm-serv/models/<org>/<repo>/
 
-sudo chown -R llm-serv:llm-serv /opt/llm-serv/models/unsloth
+sudo chown -R llm-serv:llm-serv /opt/llm-serv/models/<org>
 ```
 
-The weights run to tens of GB; make sure `/opt` has room. The paths must match what `run` refers to:
+The store is not writable by your account, hence `sudo`; `env "PATH=$PATH"` keeps `uvx` reachable, since `sudo` drops `~/.local/bin` from the path. Weights run to tens of GB, so check `/opt` has room. Confirm the service account can read what landed:
 
 ```sh
-sudo -u llm-serv ls -l /opt/llm-serv/models/unsloth/Qwen3.8-27B-GGUF/
+sudo -u llm-serv ls -l /opt/llm-serv/models/<org>/<repo>/
 ```
 
 ## 7. Environment file
 
 ```sh
 sudo install -o llm-serv -g llm-serv -m 0640 \
-  examples/llama-v100x2-qwen3.8-27b/env.example /etc/llm-serv/llama.env
+  examples/<example>/env.example /etc/llm-serv/<instance>.env
 
-sudoedit /etc/llm-serv/llama.env
+sudoedit /etc/llm-serv/<instance>.env
 ```
 
-Replace the placeholder with the real key:
+Replace the placeholder with the real key. The variable is named for the engine — `LLAMA_API_KEY` or `VLLM_API_KEY` — because the engine itself reads it from the environment. `run` refuses to start when it is unset, so the server is never exposed unauthenticated by accident.
 
-```sh
-LLAMA_API_KEY="sk-..."
-```
-
-`run` refuses to start when this is unset, so the server is never exposed unauthenticated by accident.
+The same file accepts `LLM_SERV_HOST` and `LLM_SERV_PORT`. Both examples default to `0.0.0.0:8000`, so running them on one host means moving one of them.
 
 ## 8. Launch script
 
 ```sh
 sudo install -o llm-serv -g llm-serv -m 0750 \
-  examples/llama-v100x2-qwen3.8-27b/run /opt/llm-serv/llama/run
+  examples/<example>/run /opt/llm-serv/<instance>/run
 ```
 
-Review the flags before starting — GPU split, context length, and port are all hardcoded here by design. Paths are not: the script derives the engine binary and env file locations from where it is installed, so it works under any instance name.
+Review the flags before starting — GPU split, context length and batching are hardcoded here by design. Paths are not: the script derives the engine and env file locations from where it is installed, so it works under any instance name.
 
 ## 9. Start and verify
 
 ```sh
-sudo systemctl enable --now llm-serv@llama
-systemctl status llm-serv@llama
+sudo systemctl enable --now llm-serv@<instance>
+systemctl status llm-serv@<instance>
 ```
 
-Model loading takes a while; watch it happen. The logs are root-owned:
+Loading a model of this size takes minutes; watch it happen. The logs are root-owned:
 
 ```sh
-sudo tail -f /var/log/llm-serv/llama-stderr.log
+sudo tail -f /var/log/llm-serv/<instance>-stderr.log
 ```
 
-Confirm both GPUs are populated:
+Confirm every GPU is populated:
 
 ```sh
 nvidia-smi
 ```
 
-Then exercise the API:
+Then exercise the API, substituting the key variable and served model name from step 4:
 
 ```sh
-source <(sudo cat /etc/llm-serv/llama.env)
+source <(sudo cat /etc/llm-serv/<instance>.env)
 
 curl -sf http://127.0.0.1:8000/health
 
@@ -194,12 +180,12 @@ curl -s http://127.0.0.1:8000/v1/chat/completions \
   -d '{"model":"qwen3.8-27b","messages":[{"role":"user","content":"Say hello."}]}'
 ```
 
-The model should report itself under the alias `qwen3.8-27b` rather than the GGUF filename.
+The model should report itself under its served name rather than its on-disk path.
 
 Finally, confirm it will come back on its own after a reboot:
 
 ```sh
-systemctl is-enabled llm-serv@llama
+systemctl is-enabled llm-serv@<instance>
 ```
 
 ## Operations
@@ -207,29 +193,29 @@ systemctl is-enabled llm-serv@llama
 **Restart after editing `run` or the env file.** Neither is read by systemd, so no `daemon-reload` is involved:
 
 ```sh
-sudo systemctl restart llm-serv@llama
+sudo systemctl restart llm-serv@<instance>
 ```
 
 **Change a unit setting for one instance only.** Use a drop-in instead of editing the template:
 
 ```sh
-sudo systemctl edit llm-serv@llama   # writes .../llm-serv@llama.service.d/override.conf
-sudo systemctl restart llm-serv@llama
+sudo systemctl edit llm-serv@<instance>   # writes .../override.conf
+sudo systemctl restart llm-serv@<instance>
 ```
 
-**Update the engine.** Rebuild, reinstall the binary, restart. Keeping the previous binary as `llama.prev` makes rollback a copy and a restart.
+**Update the engine.** Rebuild and reinstall over the old artifact, then restart. Keep the previous one aside — a renamed binary, or a copy of the virtualenv — so rollback is a move and a restart.
 
-**Update the model.** Download alongside the existing files, point `run` at the new filename, restart. The old weights can be removed once the new ones are confirmed working.
+**Update the model.** Download alongside the existing files, point `run` at the new path, restart. The old weights can be removed once the new ones are confirmed working.
 
 **Run a second configuration.** Repeat from step 4 with a different instance name, setting `LLM_SERV_PORT=` in its env file. The base install from steps 1–3 is shared.
 
 **Remove an instance.**
 
 ```sh
-sudo systemctl disable --now llm-serv@llama
-sudo systemctl clean --what=state llm-serv@llama
-sudo rm -rf /opt/llm-serv/llama /etc/llm-serv/llama.env
-sudo rm -f  /var/log/llm-serv/llama-*
+sudo systemctl disable --now llm-serv@<instance>
+sudo systemctl clean --what=state llm-serv@<instance>
+sudo rm -rf /opt/llm-serv/<instance> /etc/llm-serv/<instance>.env
+sudo rm -f  /var/log/llm-serv/<instance>-*
 ```
 
 ## Troubleshooting
@@ -241,10 +227,11 @@ Read the exit status from `systemctl status llm-serv@<instance>`. systemd's own 
 | `209/STDOUT` | `/var/log/llm-serv` missing | `sudo systemd-tmpfiles --create /etc/tmpfiles.d/llm-serv.conf` (step 3) |
 | `200/CHDIR` | `/opt/llm-serv/<instance>/` missing | Step 4 |
 | `203/EXEC` | `run` not executable, or wrong shebang | `sudo chmod 0750 /opt/llm-serv/<instance>/run` |
-| `Error: LLAMA_API_KEY is not set.` in stderr | env file missing, or unreadable by `llm-serv` | Step 7; check ownership and `0640` |
-| Permission denied on a model or the binary | Files owned by root without group read | `sudo chown -R llm-serv:llm-serv` the offending path |
+| `Error: <ENGINE>_API_KEY is not set.` in stderr | env file missing, or unreadable by `llm-serv` | Step 7; check ownership and `0640` |
+| Permission denied on a model or the engine | Files owned by root without group read | `sudo chown -R llm-serv:llm-serv` the offending path |
+| `bad interpreter: Permission denied` | The virtualenv links to an interpreter `llm-serv` cannot reach | `readlink -f <venv>/bin/python3`; reinstall it somewhere readable (step 5) |
 | `start request repeated too quickly` | 3 failures within 300s tripped the rate limit | Fix the cause, then `sudo systemctl reset-failed llm-serv@<instance>` |
-| CUDA out of memory during load | Context or split too large for 64 GB | Lower `-c`, or retune `-ts` in `run` |
+| CUDA out of memory during load | Context or memory share too large for the cards | llama.cpp: lower `-c` or retune `-ts`. vLLM: lower `--gpu-memory-utilization` or `--max-model-len` |
 | Startup appears to hang | Large models take minutes to load, and there is no start timeout | Watch `<instance>-stderr.log` until the listen line appears |
 | `Address already in use` | Another instance holds the port | Set `LLM_SERV_PORT=` in `/etc/llm-serv/<instance>.env` |
 
