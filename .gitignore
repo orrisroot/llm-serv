@@ -1,0 +1,8 @@
+# Real environment files; only the env.example templates are tracked
+*.env
+
+# Model weights are fetched to /opt/llm-serv/models, never tracked here
+*.gguf
+
+# In case the engine is built inside this checkout
+/llama.cpp/

@@ -1,0 +1,9 @@
+/var/log/llm-serv/*.log {
+    monthly
+    rotate 120
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

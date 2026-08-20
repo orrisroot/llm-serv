@@ -1,0 +1,45 @@
+# llm-serv@.service - Template unit for per-instance LLM serving.
+# Usage: systemctl enable --now llm-serv@<instance>
+#
+# Everything here is instance-independent. Per-instance configuration lives in
+# /opt/llm-serv/<instance>/run and /etc/llm-serv/<instance>.env; host-specific
+# tuning such as memory caps goes in a drop-in via `systemctl edit`.
+#
+# Logs go to /var/log/llm-serv/<instance>-*.log, out of the system journal.
+
+[Unit]
+Description=LLM serving engine (%i)
+After=network-online.target nvidia-persistenced.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=llm-serv
+Group=llm-serv
+WorkingDirectory=/opt/llm-serv/%i
+
+# Engine-specific environment overrides (optional)
+EnvironmentFile=-/etc/llm-serv/%i.env
+
+# Single entry point for the engine; flags are hardcoded inside
+ExecStart=/opt/llm-serv/%i/run
+
+# Dedicated log files; the directory comes from /etc/tmpfiles.d/llm-serv.conf.
+# Written as root:root, mode 0640.
+StandardOutput=append:/var/log/llm-serv/%i-stdout.log
+StandardError=append:/var/log/llm-serv/%i-stderr.log
+UMask=0027
+
+# Workload limits. Machine-dependent caps belong in a drop-in, not here.
+TasksMax=infinity
+LimitNOFILE=65536:524288
+LimitMEMLOCK=infinity
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

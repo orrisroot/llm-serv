@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instance identity, derived from where this script is installed:
+# /opt/llm-serv/<instance>/run
+INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE="$(basename -- "${INSTANCE_DIR}")"
+
+# CUDA environment configuration
+export CUDA_HOME="/usr/local/cuda-12.8"
+export PATH="${CUDA_HOME}/bin:${PATH}"
+export LD_LIBRARY_PATH="${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+# Load environment configuration file if present
+ENV_FILE="/etc/llm-serv/${INSTANCE}.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+fi
+
+# Ensure API key is configured. It reaches the server through the environment
+# (exported above), never as a command-line flag, so it stays out of ps output.
+if [[ -z "${LLAMA_API_KEY:-}" ]]; then
+  echo "Error: LLAMA_API_KEY is not set." >&2
+  exit 1
+fi
+
+# Server and model configuration
+LLAMA_BIN="${INSTANCE_DIR}/bin/llama"
+MODEL_DIR="/opt/llm-serv/models"
+MODEL_FILE="unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q8_K_XL.gguf"
+MMPROJ_FILE="unsloth/Qwen3.8-27B-GGUF/mmproj-F16.gguf"
+MODEL_ALIAS="qwen3.8-27b"
+
+HOST="0.0.0.0"
+PORT="8000"
+
+# Context and parallel slots configuration (2 slots * 256k tokens)
+N_PARALLEL=2
+TOTAL_CTX=524288
+
+# Launch llama-server with dual V100 GPU tensor split and native MTP
+exec "${LLAMA_BIN}" serve \
+  -m "${MODEL_DIR}/${MODEL_FILE}" \
+  --mmproj "${MODEL_DIR}/${MMPROJ_FILE}" \
+  --alias "${MODEL_ALIAS}" \
+  -ngl 99 \
+  -ts 34,30 \
+  -np "${N_PARALLEL}" \
+  -c "${TOTAL_CTX}" \
+  -ctk q8_0 \
+  -ctv q8_0 \
+  --no-kv-unified \
+  --image-min-tokens 1024 \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 3 \
+  --reasoning-preserve \
+  --jinja \
+  --host "${HOST}" \
+  --port "${PORT}"
+
