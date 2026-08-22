@@ -58,12 +58,14 @@ curl -sL -o /tmp/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl \
   https://github.com/1CatAI/1Cat-vLLM/releases/download/v1.3.0/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl
 
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm1cat/.venv uv pip install \
-  --prefer-binary --no-cache-dir \
+  --no-cache-dir --index-strategy unsafe-best-match \
   --extra-index-url https://download.pytorch.org/whl/cu128 \
   /tmp/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl
 
 rm -f /tmp/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl
 ```
+
+`--index-strategy unsafe-best-match` is required. By default uv takes a package from the first index that carries it at all; the CUDA index carries `flashinfer-python`, but not the `0.6.11.post2` this wheel pins, so the resolve fails outright without ever consulting PyPI. The flag makes uv consider every index, which is what `--extra-index-url` already means to pip.
 
 The wheel bundles `flash_attn_v100` and the SM70 CUDA extensions; no source build or lmdeploy tree is required.
 
