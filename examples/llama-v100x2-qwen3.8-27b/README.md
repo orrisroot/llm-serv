@@ -128,6 +128,8 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | --- | --- |
 | `--mmproj mmproj-F16.gguf` | Vision projector; enables image input |
 | `--image-min-tokens 1024` | Minimum token budget per image, so small images are not downscaled too aggressively |
+| `--cache-reuse 256` | Reuses displaced KV chunks for diverging prompts; zero measured cost, large TTFT win for multi-turn chat and shared system prompts |
+| `--metrics` | Enables the Prometheus metrics endpoint |
 | `--spec-type draft-mtp` / `--spec-draft-n-max 3` | Speculative decoding via the model's built-in MTP head — no separate draft model needed |
 | `--reasoning-preserve` | Keeps the reasoning (thinking) content in the response |
 | `--jinja` | Uses the chat template embedded in the GGUF |

@@ -54,6 +54,8 @@ exec "${LLAMA_BIN}" serve \
   -ctk q8_0 \
   -ctv q8_0 \
   --no-kv-unified \
+  --cache-reuse 256 \
+  --metrics \
   --image-min-tokens 1024 \
   --spec-type draft-mtp \
   --spec-draft-n-max 3 \
