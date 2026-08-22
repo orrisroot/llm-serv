@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instance identity, derived from where this script is installed:
+# /opt/llm-serv/<instance>/run
+INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE="$(basename -- "${INSTANCE_DIR}")"
+
+# CUDA and virtualenv environment configuration. 12.8 is the last toolkit
+# supporting Volta (sm_70); the 1Cat-vLLM wheel ships its own CUDA 12.8
+# runtime and PyTorch cu128 build, so only the toolkit path is exported.
+export CUDA_HOME="/usr/local/cuda-12.8"
+export VIRTUAL_ENV="${INSTANCE_DIR}/.venv"
+export PATH="${CUDA_HOME}/bin:${VIRTUAL_ENV}/bin:${PATH}"
+
+# Load environment configuration file if present
+ENV_FILE="/etc/llm-serv/${INSTANCE}.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+fi
+
+# Ensure API key is configured. It reaches the server through the environment
+# (exported above), never as a command-line flag, so it stays out of ps output.
+if [[ -z "${VLLM_API_KEY:-}" ]]; then
+  echo "Error: VLLM_API_KEY is not set." >&2
+  exit 1
+fi
+
+# Server and model configuration
+VLLM_BIN="${VIRTUAL_ENV}/bin/vllm"
+MODEL_DIR="/opt/llm-serv/models"
+MODEL_PATH="Qwen/Qwen3.8-27B-FP8"
+MODEL_ALIAS="qwen3.8-27b"
+
+# Tensor-parallel GPUs; overridable from the env file, e.g. for a 4-GPU host
+# with TP4
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
+
+# Listen address; both may be overridden from the env file
+HOST="${LLM_SERV_HOST:-0.0.0.0}"
+PORT="${LLM_SERV_PORT:-8000}"
+
+# Context and concurrency profile: 8 slots x 128k tokens. The 256k x 4-slot
+# variant is documented in the README. Both overridable from the env file.
+MAX_MODEL_LEN="${LLM_MAX_MODEL_LEN:-131072}"
+MAX_NUM_SEQS="${LLM_MAX_NUM_SEQS:-8}"
+MAX_NUM_BATCHED_TOKENS=8192
+
+# Default reasoning effort, applied to requests that do not set one. The
+# Qwen3.8 chat template accepts low, medium, xhigh (model default: xhigh).
+# Overridable from the env file.
+EXTRA_ARGS=()
+if [[ -n "${LLM_REASONING_EFFORT:-}" ]]; then
+  case "${LLM_REASONING_EFFORT}" in
+    low|medium|xhigh) ;;
+    *) echo "Error: LLM_REASONING_EFFORT must be one of low, medium, xhigh (got: ${LLM_REASONING_EFFORT})." >&2; exit 1 ;;
+  esac
+  EXTRA_ARGS+=(--default-chat-template-kwargs "{\"reasoning_effort\": \"${LLM_REASONING_EFFORT}\"}")
+fi
+
+# Launch 1Cat-vLLM with SM70 FlashAttention and 2-way tensor parallelism.
+# The working directory must stay outside any 1Cat-vLLM source checkout, or
+# Python imports the source tree instead of the wheel's CUDA extensions.
+exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
+  --served-model-name "${MODEL_ALIAS}" \
+  --trust-remote-code \
+  --tensor-parallel-size 2 \
+  --gpu-memory-utilization 0.95 \
+  --max-model-len "${MAX_MODEL_LEN}" \
+  --max-num-seqs "${MAX_NUM_SEQS}" \
+  --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+  --kv-cache-dtype fp8_e5m2 \
+  --attention-backend FLASH_ATTN_V100 \
+  --tool-call-parser qwen3_coder \
+  --enable-auto-tool-choice \
+  --reasoning-parser qwen3 \
+  "${EXTRA_ARGS[@]}" \
+  --host "${HOST}" \
+  --port "${PORT}"

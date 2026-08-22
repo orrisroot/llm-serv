@@ -75,16 +75,16 @@ Everything above is engine-independent; adding a second engine later reuses all 
 
 Everything from here depends on which example you deploy.
 
-| | [llama.cpp](../examples/llama-v100x2-qwen3.8-27b) | [llama.cpp ×3](../examples/llama-v100x3-qwen3.8-27b) | [vLLM](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
-| --- | --- | --- | --- |
-| Hardware | V100 32GB ×2 (sm_70) | V100 32GB ×3 (sm_70) | L40S ×8 (sm_89) |
-| CUDA | 12.8 | 12.8 | 13.0 |
-| Extra build tools | cmake, gcc | cmake, gcc | rust, gh, Python 3.12 |
-| Engine artifact | one static binary in `bin/` | one static binary in `bin/` | a virtualenv in `.venv/` |
-| Model | `unsloth/Qwen3.8-27B-GGUF` | `unsloth/Qwen3.8-27B-GGUF` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
-| API key variable | `LLAMA_API_KEY` | `LLAMA_API_KEY` | `VLLM_API_KEY` |
-| Served model name | `qwen3.8-27b` | `qwen3.8-27b` | `deepseek-v4-flash-0731` |
-| Instance name below | `llama` | `llama` | `vllm` |
+| | [llama.cpp](../examples/llama-v100x2-qwen3.8-27b) | [llama.cpp ×3](../examples/llama-v100x3-qwen3.8-27b) | [vLLM 1Cat](../examples/vllm-1cat-v100x2-qwen3.8-27b) | [vLLM](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
+| --- | --- | --- | --- | --- |
+| Hardware | V100 32GB ×2 (sm_70) | V100 32GB ×3 (sm_70) | V100 32GB ×2, TP2 (sm_70) | L40S ×8 (sm_89) |
+| CUDA | 12.8 | 12.8 | 12.8 | 13.0 |
+| Extra build tools | cmake, gcc | cmake, gcc | uv + prebuilt wheel | rust, gh, Python 3.12 |
+| Engine artifact | one static binary in `bin/` | one static binary in `bin/` | a virtualenv in `.venv/` | a virtualenv in `.venv/` |
+| Model | `unsloth/Qwen3.8-27B-GGUF` | `unsloth/Qwen3.8-27B-GGUF` | `Qwen/Qwen3.8-27B-FP8` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
+| API key variable | `LLAMA_API_KEY` | `LLAMA_API_KEY` | `VLLM_API_KEY` | `VLLM_API_KEY` |
+| Served model name | `qwen3.8-27b` | `qwen3.8-27b` | `qwen3.8-27b` | `deepseek-v4-flash-0731` |
+| Instance name below | `llama` | `llama` | `vllm1cat` | `vllm` |
 
 The remaining steps write `<instance>` and `<example>` where the values from that table go. Create the instance directory:
 
@@ -96,10 +96,11 @@ An example may call for a subdirectory as well — `bin/` for llama.cpp — whic
 
 ## 5. Install the engine
 
-Neither example uses a prebuilt engine, and the two procedures have almost nothing in common, so each lives with its example:
+The engines differ enough that each procedure lives with its example:
 
 - [llama.cpp ×2 — Building the engine](../examples/llama-v100x2-qwen3.8-27b/README.md#building-the-engine)
 - [llama.cpp ×3 — Building the engine](../examples/llama-v100x3-qwen3.8-27b/README.md#building-the-engine)
+- [vLLM 1Cat — Runtime virtualenv](../examples/vllm-1cat-v100x2-qwen3.8-27b/README.md#runtime-virtualenv)
 - [vLLM — Building the engine](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#runtime-virtualenv)
 
 Two rules apply to both, and account for most of the failures at this step:
