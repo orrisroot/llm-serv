@@ -75,7 +75,7 @@ Everything above is engine-independent; adding a second engine later reuses all 
 
 Everything from here depends on which example you deploy.
 
-| | [llama.cpp](../examples/llama-v100x2-qwen3.8-27b) | [llama.cpp ×3](../examples/llama-v100x3-qwen3.8-27b) | [vLLM 1Cat](../examples/vllm-1cat-v100x2-qwen3.8-27b) | [vLLM](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
+| | [llama.cpp](../examples/llama-v100x2-qwen3.8-27b) | [llama.cpp ×3](../examples/llama-v100x3-qwen3.8-27b) | [vLLM](../examples/vllm-v100x2-qwen3.8-27b) | [vLLM ×8](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
 | --- | --- | --- | --- | --- |
 | Hardware | V100 32GB ×2 (sm_70) | V100 32GB ×3 (sm_70) | V100 32GB ×2, TP2 (sm_70) | L40S ×8 (sm_89) |
 | CUDA | 12.8 | 12.8 | 12.8 | 13.0 |
@@ -100,8 +100,8 @@ The engines differ enough that each procedure lives with its example:
 
 - [llama.cpp ×2 — Building the engine](../examples/llama-v100x2-qwen3.8-27b/README.md#building-the-engine)
 - [llama.cpp ×3 — Building the engine](../examples/llama-v100x3-qwen3.8-27b/README.md#building-the-engine)
-- [vLLM 1Cat — Runtime virtualenv](../examples/vllm-1cat-v100x2-qwen3.8-27b/README.md#runtime-virtualenv)
-- [vLLM — Building the engine](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#runtime-virtualenv)
+- [vLLM — Runtime virtualenv](../examples/vllm-v100x2-qwen3.8-27b/README.md#runtime-virtualenv)
+- [vLLM ×8 — Building the engine](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#runtime-virtualenv)
 
 Two rules apply to both, and account for most of the failures at this step:
 
