@@ -33,6 +33,8 @@ sudo useradd --system --no-create-home --shell /usr/sbin/nologin llm-serv
 
 A system account with no home directory and no login shell. Every instance runs as this user, so model files and the engine binary must be readable by it.
 
+There is deliberately no persistent home directory: engines that cache compiled kernels or model metadata still get a working `$HOME`, but systemd points it at a per-instance directory it creates and owns — `StateDirectory=llm-serv/%i` (that is, `/var/lib/llm-serv/<instance>`) — via `Environment=HOME=...` in `llm-serv@.service`. It exists only while the instance is active, so nothing stray accumulates in a home directory you would otherwise have to locate and clean up.
+
 If `/dev/nvidia*` is not world-accessible on this host, add the account to the owning group:
 
 ```sh
