@@ -28,10 +28,12 @@ Because it lives in `~/.local/bin`, which `sudo` drops from the path, the steps 
 ## 1. Service account
 
 ```sh
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin llm-serv
+sudo useradd --system --no-create-home --home-dir /var/lib/llm-serv --shell /usr/sbin/nologin llm-serv
 ```
 
 A system account with no home directory and no login shell. Every instance runs as this user, so model files and the engine binary must be readable by it.
+
+`--home-dir /var/lib/llm-serv` points the passwd entry at the directory systemd's `StateDirectory` is created under (below), rather than leaving the default `/home/llm-serv` as a phantom home that nothing uses. The directory itself is not created here; `--no-create-home` skips that.
 
 There is deliberately no persistent home directory: engines that cache compiled kernels or model metadata still get a working `$HOME`, but systemd points it at a per-instance directory it creates and owns — `StateDirectory=llm-serv/%i` (that is, `/var/lib/llm-serv/<instance>`) — via `Environment=HOME=...` in `llm-serv@.service`. It exists only while the instance is active, so nothing stray accumulates in a home directory you would otherwise have to locate and clean up.
 

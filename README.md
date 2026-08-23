@@ -61,8 +61,10 @@ These steps are shared by every instance and only need to be done once. They are
 All engines run as a dedicated unprivileged system account with no home directory and no login shell:
 
 ```sh
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin llm-serv
+sudo useradd --system --no-create-home --home-dir /var/lib/llm-serv --shell /usr/sbin/nologin llm-serv
 ```
+
+`--home-dir /var/lib/llm-serv` keeps the passwd entry aligned with the per-instance `$HOME` the service provides via `StateDirectory` (see the template unit), instead of a phantom `/home/llm-serv`. The directory is not created here.
 
 If the NVIDIA device nodes on the host are not world-accessible, add the account to the group that owns `/dev/nvidia*` as well.
 
