@@ -232,7 +232,7 @@ Read the exit status from `systemctl status llm-serv@<instance>`. systemd's own 
 | Permission denied on a model or the engine | Files owned by root without group read | `sudo chown -R llm-serv:llm-serv` the offending path |
 | `bad interpreter: Permission denied` | The virtualenv links to an interpreter `llm-serv` cannot reach | `readlink -f <venv>/bin/python3`; reinstall it somewhere readable (step 5) |
 | `start request repeated too quickly` | 3 failures within 300s tripped the rate limit | Fix the cause, then `sudo systemctl reset-failed llm-serv@<instance>` |
-| CUDA out of memory during load | Context or memory share too large for the cards | llama.cpp: lower `-c` or retune `-ts`. vLLM: lower `--gpu-memory-utilization` or `--max-model-len` |
+| CUDA out of memory during load | Context or memory share too large for the cards | llama.cpp: lower `LLM_TOTAL_CTX` (`-c`) or retune `LLM_TENSOR_SPLIT` (`-ts`). vLLM: lower `LLM_GPU_MEMORY_UTILIZATION` or `LLM_MAX_MODEL_LEN` |
 | Startup appears to hang | Large models take minutes to load, and there is no start timeout | Watch `<instance>-stderr.log` until the listen line appears |
 | `Address already in use` | Another instance holds the port | Set `LLM_SERV_PORT=` in `/etc/llm-serv/<instance>.env` |
 

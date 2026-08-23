@@ -7,7 +7,7 @@ Everything that depends on the engine (llama.cpp, vLLM, ...) or the model is con
 ## Design principles
 
 1. **One template unit covers every configuration.** Instantiating `llm-serv@.service` is all it takes to bring up a new engine or model.
-2. **Launch flags are hardcoded in `run`.** Configuration is not scattered across `Environment=` directives or ambient variables. Reading `run` tells you exactly how that instance starts.
+2. **Launch flags live in `run`.** Reading `run` shows the exact command line an instance starts with. A few tuning values (GPU split, context, memory) can be overridden from the env file.
 3. **Only secrets live in `EnvironmentFile`.** API keys go to `/etc/llm-serv/<instance>.env` and are never tracked in this repository.
 4. **Logs stay out of the journal.** Inference servers are chatty, so output goes to dedicated files managed by logrotate.
 
@@ -119,7 +119,7 @@ Services run as the dedicated `llm-serv` user, so model files and engine binarie
 
 ## Adding a new configuration
 
-1. Copy the closest match from `examples/` and adjust `run` — model paths, GPU split, port, and so on.
+1. Copy the closest match from `examples/` and adjust `run` (model paths, engine-specific flags), setting tuning values like GPU split and context in the env file.
 2. Create the instance directory: `sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/<instance>`.
 3. Install `run` to `/opt/llm-serv/<instance>/run` (`0750 llm-serv:llm-serv`).
 4. Create `/etc/llm-serv/<instance>.env` (`0640 llm-serv:llm-serv`) for the API key, and for `LLM_SERV_HOST`/`LLM_SERV_PORT` if the defaults do not suit.

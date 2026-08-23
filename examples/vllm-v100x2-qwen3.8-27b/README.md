@@ -1,6 +1,6 @@
 # 1Cat-vLLM / V100 32GB ×2 / Qwen3.8 27B FP8
 
-Serves Qwen3.8 27B through [1Cat-vLLM](https://github.com/1CatAI/1Cat-vLLM), a vLLM fork focused on SM70 / Tesla V100, using its `FLASH_ATTN_V100` attention backend and 2-way tensor parallelism. Validated on this exact host.
+Serves Qwen3.8 27B through [1Cat-vLLM](https://github.com/1CatAI/1Cat-vLLM), a vLLM fork focused on SM70 / Tesla V100, using its `FLASH_ATTN_V100` attention backend (tensor parallelism defaults to 2, one rank per V100). Validated on this exact host.
 
 ## Target environment
 
@@ -113,7 +113,7 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 
 | Flag | Value | Rationale |
 | --- | --- | --- |
-| `--tensor-parallel-size <n>` | 2 | One rank per GPU, derived from the number of visible devices. TP4 is the fork's public reference on 4-GPU hosts — set `CUDA_VISIBLE_DEVICES` to four devices (or set `LLM_TENSOR_PARALLEL_SIZE`) |
+| `--tensor-parallel-size <n>` | 2 | One rank per GPU, derived from the number of visible devices. On a 4-GPU host, set `CUDA_VISIBLE_DEVICES` to four devices (or set `LLM_TENSOR_PARALLEL_SIZE`) |
 | `--gpu-memory-utilization <f>` | 0.95 | ~30.2 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
 | `--max-model-len 131072` / `--max-num-seqs 8` | — | 8 slots × 128k. The parallelism profile: 242 tok/s aggregate at zero single-stream cost. The 4-slot × 256k profile (`LLM_MAX_MODEL_LEN=262144 LLM_MAX_NUM_SEQS=4`) serves long context at 128.6 tok/s |
 | `--max-num-batched-tokens 8192` | 8192 | Prefill batch budget from the fork's public profiles |

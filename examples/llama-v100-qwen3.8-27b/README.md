@@ -120,7 +120,7 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 
 ## Configuration rationale
 
-The same `run` serves either GPU count; only the three values below change. The defaults are the 2-GPU profile; the 3-GPU profile is set via the env file (see [Environment variables](#environment-variables)).
+The defaults below are the 2-GPU profile; the 3-GPU profile is set via the env file (see [Environment variables](#environment-variables)).
 
 ### GPU allocation
 
