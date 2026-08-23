@@ -188,5 +188,3 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 It binds to `0.0.0.0:8000` by default. Both are overridable from `/etc/llm-serv/<instance>.env` without touching `run` — set `LLM_SERV_HOST=127.0.0.1` to keep it on the loopback, or `LLM_SERV_PORT=` to move it out of the way of another instance. The reference deployment keeps the engine on a private network and fronts it with an httpd reverse proxy that maps per-user API keys onto this single backend key.
 
 Note that `--trust-remote-code` executes Python shipped in the model repository. Pin the model revision if the checkout is refreshed from upstream.
-
-Port 8000 is also used by the llama.cpp example; give one of them a different `LLM_SERV_PORT` if both run on the same host.

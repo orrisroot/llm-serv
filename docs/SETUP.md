@@ -14,7 +14,7 @@ Commands that change the system are shown with `sudo`; everything else runs as y
 | NVIDIA driver, GPUs visible | `nvidia-smi` |
 | git | `git --version` |
 
-Both examples build their engine from source, so the CUDA toolkit and compilers have to be on the host itself — or on a machine with the same CUDA version, from which only the build output is copied over. Which version, and which extra tools, depends on the example; see the table in [step 4](#4-pick-an-example).
+Both llama.cpp examples and the L40S vLLM example build their engine from source, so they need the CUDA toolkit and compilers on the host itself — or on a machine with the same CUDA version, from which only the build output is copied over. The 1Cat-vLLM example installs a prebuilt wheel and needs neither. Which version, and which extra tools, depends on the example; see the table in [step 4](#4-pick-an-example).
 
 `uv` is not assumed to be present. Install it for your own account — every example uses it to fetch models, and some to build the engine:
 
@@ -136,7 +136,7 @@ sudoedit /etc/llm-serv/<instance>.env
 
 Replace the placeholder with the real key. The variable is named for the engine — `LLAMA_API_KEY` or `VLLM_API_KEY` — because the engine itself reads it from the environment. `run` refuses to start when it is unset, so the server is never exposed unauthenticated by accident.
 
-The same file accepts `LLM_SERV_HOST` and `LLM_SERV_PORT`. Both examples default to `0.0.0.0:8000`, so running them on one host means moving one of them.
+The same file accepts `LLM_SERV_HOST` and `LLM_SERV_PORT`. Every example defaults to `0.0.0.0:8000`, so running more than one of them on a host means moving one of them.
 
 ## 8. Launch script
 

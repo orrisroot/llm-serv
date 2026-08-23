@@ -30,6 +30,9 @@ examples/                               ← Reference configurations, meant to b
     run                                   Launch script
     env.example                           Environment file template
   vllm-l40sx8-deepseek-v4-flash-0731/
+    README.md                             Assumptions and rationale for this setup
+    run                                   Launch script
+    env.example                           Environment file template
   vllm-v100x2-qwen3.8-27b/
     README.md                             Assumptions, benchmarks, and rationale
     run                                   Launch script

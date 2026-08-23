@@ -113,7 +113,7 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 
 | Flag | Value | Rationale |
 | --- | --- | --- |
-| `--tensor-parallel-size 2` | 2 | One rank per GPU across two cards. TP4 is the fork's public reference on 4-GPU hosts — set `CUDA_VISIBLE_DEVICES` there |
+| `--tensor-parallel-size 2` | 2 | One rank per GPU across two cards. TP4 is the fork's public reference on 4-GPU hosts — set `CUDA_VISIBLE_DEVICES` to four devices and edit `--tensor-parallel-size` in `run` |
 | `--gpu-memory-utilization 0.95` | 0.95 | ~30.2 GiB used per GPU after load; the FP8 weights leave just enough KV headroom |
 | `--max-model-len 131072` / `--max-num-seqs 8` | — | 8 slots × 128k. The parallelism profile: 242 tok/s aggregate at zero single-stream cost. The 4-slot × 256k profile (`LLM_MAX_MODEL_LEN=262144 LLM_MAX_NUM_SEQS=4`) serves long context at 128.6 tok/s |
 | `--max-num-batched-tokens 8192` | 8192 | Prefill batch budget from the fork's public profiles |
