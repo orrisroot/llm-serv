@@ -79,16 +79,16 @@ Everything above is engine-independent; adding a second engine later reuses all 
 
 Everything from here depends on which example you deploy.
 
-| | [llama.cpp](../examples/llama-v100-qwen3.8-27b) | [vLLM](../examples/vllm-v100x2-qwen3.8-27b) | [vLLM ×8](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
-| --- | --- | --- | --- |
-| Hardware | V100 32GB ×2 / ×3 (sm_70) | V100 32GB ×2 (sm_70) | L40S ×8 (sm_89) |
-| CUDA | 12.8 | 12.8 | 13.0 |
-| Extra build tools | cmake, gcc | uv + prebuilt wheel | rust, gh, Python 3.12 |
-| Engine artifact | one static binary in `bin/` | a virtualenv in `.venv/` | a virtualenv in `.venv/` |
-| Model | `unsloth/Qwen3.8-27B-GGUF` | `Qwen/Qwen3.8-27B-FP8` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
-| API key variable | `LLAMA_API_KEY` | `VLLM_API_KEY` | `VLLM_API_KEY` |
-| Served model name | `qwen3.8-27b` | `qwen3.8-27b` | `deepseek-v4-flash-0731` |
-| Instance name below | `llama` | `vllm1cat` | `vllm` |
+| | [llama.cpp](../examples/llama-v100-qwen3.8-27b) | [vLLM](../examples/vllm-v100x2-qwen3.8-27b) | [SGLang](../examples/sglang-v100x2-qwen3.8-27b) | [vLLM ×8](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
+| --- | --- | --- | --- | --- |
+| Hardware | V100 32GB ×2 / ×3 (sm_70) | V100 32GB ×2 (sm_70) | V100 32GB ×2 (sm_70) | L40S ×8 (sm_89) |
+| CUDA | 12.8 | 12.8 | 12.8 | 13.0 |
+| Extra build tools | cmake, gcc | uv + prebuilt wheel | rust, protoc, uv | rust, gh, Python 3.12 |
+| Engine artifact | one static binary in `bin/` | a virtualenv in `.venv/` | a virtualenv in `.venv/` built from source | a virtualenv in `.venv/` |
+| Model | `unsloth/Qwen3.8-27B-GGUF` | `Qwen/Qwen3.8-27B-FP8` | `Qwen/Qwen3.8-27B-FP8` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
+| API key variable | `LLAMA_API_KEY` | `VLLM_API_KEY` | `SGLANG_API_KEY` | `VLLM_API_KEY` |
+| Served model name | `qwen3.8-27b` | `qwen3.8-27b` | `qwen3.8-27b` | `deepseek-v4-flash-0731` |
+| Instance name below | `llama` | `vllm1cat` | `sglang` | `vllm` |
 
 The remaining steps write `<instance>` and `<example>` where the values from that table go. Create the instance directory:
 
@@ -104,6 +104,7 @@ The engines differ enough that each procedure lives with its example:
 
 - [llama.cpp — Building the engine](../examples/llama-v100-qwen3.8-27b/README.md#building-the-engine)
 - [vLLM — Runtime virtualenv](../examples/vllm-v100x2-qwen3.8-27b/README.md#runtime-virtualenv)
+- [SGLang — Building the engine](../examples/sglang-v100x2-qwen3.8-27b/README.md#building-the-engine)
 - [vLLM ×8 — Building the engine](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#runtime-virtualenv)
 
 Two rules apply to both, and account for most of the failures at this step:
@@ -137,7 +138,7 @@ sudo install -o llm-serv -g llm-serv -m 0640 \
 sudoedit /etc/llm-serv/<instance>.env
 ```
 
-Replace the placeholder with the real key. The variable is named for the engine — `LLAMA_API_KEY` or `VLLM_API_KEY` — because the engine itself reads it from the environment. `run` refuses to start when it is unset, so the server is never exposed unauthenticated by accident.
+Replace the placeholder with the real key. The variable is named for the engine — `LLAMA_API_KEY`, `VLLM_API_KEY`, `SGLANG_API_KEY` — and `run` validates it at startup, so the server is never exposed unauthenticated by accident. `run` hands it to the engine via the environment, except for sglang, which has no environment fallback for the key and receives it as `--api-key` (see that example's README for the caveat).
 
 The same file accepts `LLM_SERV_HOST` and `LLM_SERV_PORT`. Every example defaults to `0.0.0.0:8000`, so running more than one of them on a host means moving one of them.
 

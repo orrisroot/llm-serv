@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# build - build sglang-V100 from source into a virtualenv.
+#
+# Port of the fork's scripts/install_v100.sh, adapted to:
+#   - a virtualenv at its final path
+#   - RHEL-family hosts: no apt step (toolchain must already be present)
+#
+# The venv must exist before this runs (created like the other examples:
+# `sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
+#   uv venv --python 3.12 --seed /opt/llm-serv/sglang/.venv`).
+# It must be writable by the user running this script.
+#
+# Overridable environment:
+#   SGLANG_SRC_DIR   fork checkout (default /opt/llm-serv/sglang-v100/sglang-V100)
+#   SGLANG_VENV      target venv    (default /opt/llm-serv/sglang/.venv)
+#   SGLANG_DEPS_DIR  pinned source checkouts (default: <src-parent>/deps)
+#   MAX_JOBS / NVCC_THREADS   build parallelism (defaults: RAM-capped)
+set -Eeuo pipefail
+
+log() { printf '\n\033[1;34m[build-v100]\033[0m %s\n' "$*"; }
+die() { printf '\n\033[1;31m[build-v100] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+SGLANG_SRC_DIR="${SGLANG_SRC_DIR:-/opt/llm-serv/sglang-v100/sglang-V100}"
+SGLANG_VENV="${SGLANG_VENV:-/opt/llm-serv/sglang/.venv}"
+SGLANG_DEPS_DIR="${SGLANG_DEPS_DIR:-$(dirname "${SGLANG_SRC_DIR}")/deps}"
+
+# Pinned source revisions, mirroring the fork's install_v100.sh.
+FLASHINFER_REV="c3c40a7b90b792fc59f90f8f55c9e2de9c1b6833"
+TURBOMIND_SOURCE_REV="6ada86ed64af6d1a7b3cb0f34df237fd86f06d48"
+TURBOMIND_CUTLASS_REV="da5e086dab31d63815acafdac9a9c5893b1c69e2"
+MARLIN_V100_REF="6d72a49939701d26b15b617a4cd2423174adb2d1"
+
+# ------------------------------------------------------------------ preflight
+[[ -d "${SGLANG_SRC_DIR}/.git" ]] || die "${SGLANG_SRC_DIR} is not an sglang-V100 checkout."
+[[ -x "${SGLANG_VENV}/bin/python" ]] || die "${SGLANG_VENV}/bin/python missing; create the venv first."
+[[ -x /usr/local/cuda-12.8/bin/nvcc ]] || die "/usr/local/cuda-12.8 toolkit missing."
+command -v cargo >/dev/null 2>&1 || \
+  die "Rust is required (the sglang-grpc extension builds with maturin). Install rustup, then re-run."
+if [[ -z "${PROTOC:-}" ]] && ! command -v protoc >/dev/null 2>&1; then
+  die "protoc is required (sglang-grpc's build.rs). Install protobuf-compiler or set PROTOC=."
+fi
+
+# CUDA host compiler: nvcc 12.8 pairs with gcc <= 13.2 upstream; on this host
+# gcc 14 compiles fine. Prefer an older gcc when present.
+CUDAHOSTCXX="${CUDAHOSTCXX:-}"
+if [[ -z "${CUDAHOSTCXX}" ]]; then
+  for cand in /usr/bin/g++-13 /usr/bin/g++-12 /usr/bin/g++-11 /usr/bin/g++; do
+    if [[ -x "${cand}" ]]; then CUDAHOSTCXX="${cand}"; break; fi
+  done
+fi
+[[ -n "${CUDAHOSTCXX}" ]] || die "no C++ compiler found."
+
+export CUDA_HOME=/usr/local/cuda-12.8
+export PATH="${CUDA_HOME}/bin:${PATH}"
+export CUDAHOSTCXX
+export TORCH_CUDA_ARCH_LIST=7.0
+log "CUDA_HOME=${CUDA_HOME}  CUDAHOSTCXX=${CUDAHOSTCXX}"
+
+# RAM-capped build parallelism (same heuristic as the upstream installer).
+CPU_JOBS="$(nproc)"
+MEM_AVAILABLE_KIB="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+MEM_JOBS=$(( (MEM_AVAILABLE_KIB - 16 * 1024 * 1024) / (4 * 1024 * 1024) ))
+(( MEM_JOBS < 1 )) && MEM_JOBS=1
+SAFE_JOBS="$CPU_JOBS"; (( MEM_JOBS < SAFE_JOBS )) && SAFE_JOBS="$MEM_JOBS"
+export MAX_JOBS="${MAX_JOBS:-$SAFE_JOBS}"
+export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$MAX_JOBS}"
+export NVCC_THREADS="${NVCC_THREADS:-1}"
+log "Build parallelism: MAX_JOBS=$MAX_JOBS, NVCC_THREADS=$NVCC_THREADS"
+
+# ------------------------------------------------------------------ activate
+# shellcheck source=/dev/null
+source "${SGLANG_VENV}/bin/activate"
+log "venv: ${SGLANG_VENV} ($(python --version 2>&1))"
+
+mkdir -p "${SGLANG_DEPS_DIR}"
+
+# ------------------------------------------------------------- python deps
+python -m pip install --upgrade pip setuptools wheel scikit-build-core ninja psutil
+python -m pip install \
+  torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 \
+  --index-url https://download.pytorch.org/whl/cu128
+python -m pip install \
+  grpcio==1.81.1 grpcio-health-checking==1.81.1 \
+  grpcio-reflection==1.81.1 protobuf==6.33.6 tilelang==0.1.8 \
+  cuda-tile==1.5.0
+python -m pip install -e "${SGLANG_SRC_DIR}/python[diffusion-v100]"
+
+# ------------------------------------------------------------- patched deps
+# prepare_patched_repo: clone at rev and apply the fork's patch, or refresh a
+# clean checkout that drifted. Dirty checkouts are left alone (die) rather
+# than overwritten.
+prepare_patched_repo() {
+  local name=$1 url=$2 rev=$3 destination=$4 patch=$5
+  if [[ ! -d "${destination}/.git" ]]; then
+    log "Cloning ${name} at ${rev}"
+    mkdir -p "${destination}"
+    git clone "${url}" "${destination}"
+    git -C "${destination}" checkout --detach "${rev}"
+  elif [[ "$(git -C "${destination}" rev-parse HEAD)" != "${rev}" ]]; then
+    git -C "${destination}" diff --quiet || \
+      die "${destination} has local changes; move it aside or set SGLANG_DEPS_DIR."
+    git -C "${destination}" fetch origin "${rev}"
+    git -C "${destination}" checkout --detach "${rev}"
+  fi
+  if [[ -s "${patch}" ]]; then
+    if ! git -C "${destination}" apply --reverse --check "${patch}" >/dev/null 2>&1; then
+      git -C "${destination}" apply "${patch}" || \
+        die "${name} patch does not apply cleanly: ${patch}"
+      log "Applied ${name} patch"
+    else
+      log "${name} patch already applied"
+    fi
+  fi
+}
+
+FLASHINFER_DIR="${SGLANG_DEPS_DIR}/flashinfer-sm70"
+prepare_patched_repo \
+  FlashInfer https://github.com/haohervchb/flashinfer.git \
+  "${FLASHINFER_REV}" "${FLASHINFER_DIR}" \
+  "${SGLANG_SRC_DIR}/patches/flashinfer-sm70.patch"
+log "Installing the patched FlashInfer SM70 source"
+python -m pip uninstall -y flashinfer-python flashinfer-cubin || true
+python -m pip install --no-deps --no-build-isolation -e "${FLASHINFER_DIR}"
+python -m pip uninstall -y flash-attn-v100 flash_attn_v100 || true
+
+# TurboMind SM70 backend: sparse subset of 1Cat-vLLM + pinned CUTLASS.
+TURBOMIND_SOURCE_DIR="${SGLANG_DEPS_DIR}/turbomind-sm70-source"
+if [[ ! -d "${TURBOMIND_SOURCE_DIR}/.git" ]]; then
+  log "Fetching the attributed TurboMind source subset"
+  mkdir -p "${SGLANG_DEPS_DIR}"
+  git clone --filter=blob:none --sparse --no-checkout \
+    https://github.com/1CatAI/1Cat-vLLM.git "${TURBOMIND_SOURCE_DIR}"
+fi
+# Cone-mode sparse-checkout rejects file paths, so use --no-cone patterns.
+git -C "${TURBOMIND_SOURCE_DIR}" sparse-checkout set --no-cone \
+  '/LICENSE' '/csrc/*.cuh' '/csrc/*.h' \
+  '/csrc/core/*' '/csrc/sm70_turbomind/**' '/csrc/moe/**'
+if [[ "$(git -C "${TURBOMIND_SOURCE_DIR}" rev-parse HEAD)" != "${TURBOMIND_SOURCE_REV}" ]]; then
+  git -C "${TURBOMIND_SOURCE_DIR}" fetch origin "${TURBOMIND_SOURCE_REV}"
+  git -C "${TURBOMIND_SOURCE_DIR}" checkout --detach "${TURBOMIND_SOURCE_REV}"
+fi
+
+TURBOMIND_CUTLASS_DIR="${SGLANG_DEPS_DIR}/cutlass-turbomind"
+prepare_patched_repo \
+  CUTLASS https://github.com/NVIDIA/cutlass.git \
+  "${TURBOMIND_CUTLASS_REV}" "${TURBOMIND_CUTLASS_DIR}" /dev/null
+
+log "Building the TurboMind SM70 block-FP8 and FP16 MoE backend"
+SGLANG_TURBOMIND_SM70_ROOT="${TURBOMIND_SOURCE_DIR}" \
+SGLANG_TURBOMIND_CUTLASS_ROOT="${TURBOMIND_CUTLASS_DIR}" \
+  python "${SGLANG_SRC_DIR}/scripts/build_sm70_turbomind.py"
+
+# CUTLASS v4.2.1 for the Marlin build.
+CUTLASS_DIR="${SGLANG_DEPS_DIR}/cutlass"
+if [[ ! -d "${CUTLASS_DIR}/.git" ]]; then
+  git clone --depth 1 --branch v4.2.1 \
+    https://github.com/NVIDIA/cutlass.git "${CUTLASS_DIR}"
+fi
+export CUTLASS_DIR
+
+log "Building the lean SM70-only sglang-kernel"
+python -m pip uninstall -y sglang-kernel || true
+find "${SGLANG_SRC_DIR}/sgl-kernel/python/sgl_kernel" \
+  -type f -name 'common_ops*.so' -delete
+export CMAKE_ARGS="-DSGL_KERNEL_V100_ONLY=ON -DSGL_KERNEL_COMPILE_THREADS=${NVCC_THREADS}"
+python -m pip install --no-deps --no-build-isolation "${SGLANG_SRC_DIR}/sgl-kernel"
+
+log "Restoring the CUDA 12 NCCL required by torch 2.9.1"
+python -m pip uninstall -y nvidia-nccl-cu13 || true
+python -m pip install --force-reinstall --no-deps nvidia-nccl-cu12==2.27.5
+
+log "Building the V100 Marlin GPTQ/AWQ kernels"
+# CUDA 12.8 ships native bf16 device headers; the compatibility patch that
+# the fork applies for older toolkits collides with them. Reverse-apply it if
+# a previous run left it on the checkout.
+MARLIN_V100_REPO="${SGLANG_DEPS_DIR}/marlin-v100"
+if git -C "${MARLIN_V100_REPO}" apply --reverse --check \
+    "${SGLANG_SRC_DIR}/patches/marlin-v100-sm70.patch" >/dev/null 2>&1; then
+  git -C "${MARLIN_V100_REPO}" apply --reverse \
+    "${SGLANG_SRC_DIR}/patches/marlin-v100-sm70.patch"
+  log "Reverted the marlin bf16-compat patch (CUDA 12.8 has native bf16)"
+fi
+MARLIN_V100_REPO="${MARLIN_V100_REPO}" \
+MARLIN_V100_REF="${MARLIN_V100_REF}" \
+MARLIN_V100_SKIP_BF16_COMPAT=1 \
+  bash "${SGLANG_SRC_DIR}/scripts/setup_v100_marlin.sh"
+
+log "Running the SM70 smoke checks"
+if ! SGLANG_V100_FLASHINFER_DIR="${FLASHINFER_DIR}" \
+  SGLANG_V100_PYTHON="${SGLANG_VENV}/bin/python" \
+  bash "${SGLANG_SRC_DIR}/scripts/smoke_v100.sh"; then
+  printf '\n[build-v100] All expensive builds completed; rerun only validation with:\n' >&2
+  printf '  SGLANG_V100_FLASHINFER_DIR=%s SGLANG_V100_PYTHON=%s bash %s\n' \
+    "${FLASHINFER_DIR}" "${SGLANG_VENV}/bin/python" \
+    "${SGLANG_SRC_DIR}/scripts/smoke_v100.sh" >&2
+  exit 1
+fi
+
+log "Complete."

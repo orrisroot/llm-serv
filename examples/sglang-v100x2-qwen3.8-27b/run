@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instance identity, derived from where this script is installed:
+# /opt/llm-serv/<instance>/run
+INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE="$(basename -- "${INSTANCE_DIR}")"
+
+# CUDA environment configuration. 12.8 is the last toolkit supporting
+# Volta (sm_70); CUDA 13 removed the architecture entirely.
+export CUDA_HOME="/usr/local/cuda-12.8"
+export PATH="${CUDA_HOME}/bin:${PATH}"
+export LD_LIBRARY_PATH="${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+# Load environment configuration file if present
+ENV_FILE="/etc/llm-serv/${INSTANCE}.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+fi
+
+# Runtime virtualenv, built from source at its final path (see README).
+export VIRTUAL_ENV="${SGLANG_VENV:-${INSTANCE_DIR}/.venv}"
+export PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+# Per-instance JIT and kernel caches. The service account's $HOME is the
+# per-instance StateDirectory (/var/lib/llm-serv/<instance>), created by
+# systemd; Triton and TileLang compile kernels there on first use.
+export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
+export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-${HOME}/sglang-v100-jit}"
+export TILELANG_CACHE_DIR="${TILELANG_CACHE_DIR:-${FLASHINFER_WORKSPACE_BASE}/tilelang}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${FLASHINFER_WORKSPACE_BASE}/triton}"
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-${FLASHINFER_WORKSPACE_BASE}/torchinductor}"
+export SGLANG_V100_PYTHON="${SGLANG_V100_PYTHON:-${VIRTUAL_ENV}/bin/python}"
+
+# Ensure API key is configured. sglang reads no environment variable for it,
+# so it is passed as --api-key below (see the README for the caveat).
+if [[ -z "${SGLANG_API_KEY:-}" ]]; then
+  echo "Error: SGLANG_API_KEY is not set." >&2
+  exit 1
+fi
+
+# Runtime environment validated by the fork's README serve commands. Every
+# value can be overridden from the env file. NCCL_P2P_LEVEL is left unset on
+# purpose: the fork's image defaults to NVL (NVLink SXM2 cards), but this
+# host's V100-PCIE pair has no NVLink, so P2P over PCIe is used instead, and
+# the shared-memory transport is disabled (see the 1Cat-vLLM example on this
+# host). On an NVLink host, set NCCL_P2P_LEVEL=NVL.
+export FLASHINFER_DISABLE_VERSION_CHECK="${FLASHINFER_DISABLE_VERSION_CHECK:-1}"
+export NCCL_P2P_LEVEL="${NCCL_P2P_LEVEL:-}"
+export NCCL_SHM_DISABLE="${NCCL_SHM_DISABLE:-1}"
+export SGLANG_CUSTOM_ALLREDUCE_ALGO="${SGLANG_CUSTOM_ALLREDUCE_ALGO:-1stage}"
+export SGLANG_MAMBA_CONV_DTYPE="${SGLANG_MAMBA_CONV_DTYPE:-float16}"
+export SGLANG_MAMBA_SSM_DTYPE="${SGLANG_MAMBA_SSM_DTYPE:-float16}"
+export SGLANG_ENABLE_OVERLAP_PLAN_STREAM="${SGLANG_ENABLE_OVERLAP_PLAN_STREAM:-1}"
+
+# Server and model configuration
+MODEL_DIR="/opt/llm-serv/models"
+MODEL_PATH="Qwen/Qwen3.8-27B-FP8"
+MODEL_ALIAS="qwen3.8-27b"
+
+# Tensor-parallel GPUs and degree. The degree defaults to the number of
+# visible devices, so a 4-GPU host needs only CUDA_VISIBLE_DEVICES. Both
+# overridable from the env file.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
+if [[ -n "${LLM_TENSOR_PARALLEL_SIZE:-}" ]]; then
+  TP_SIZE="${LLM_TENSOR_PARALLEL_SIZE}"
+else
+  IFS=, read -r -a TP_DEVICES <<< "${CUDA_VISIBLE_DEVICES}"
+  TP_SIZE="${#TP_DEVICES[@]}"
+fi
+
+# Listen address; both may be overridden from the env file
+HOST="${LLM_SERV_HOST:-0.0.0.0}"
+PORT="${LLM_SERV_PORT:-8000}"
+
+# Context, concurrency and memory profile: the fastest measured configuration
+# on this host (see README) — DFLASH2 speculative decoding, 128k context,
+# 3 concurrent slots, fp8_e5m2 KV. All overridable from the env file.
+MEM_FRACTION_STATIC="${LLM_MEM_FRACTION_STATIC:-0.95}"
+CONTEXT_LENGTH="${LLM_CONTEXT_LENGTH:-131072}"
+MAX_TOTAL_TOKENS="${LLM_MAX_TOTAL_TOKENS:-393216}"
+MAX_RUNNING_REQUESTS="${LLM_MAX_RUNNING_REQUESTS:-3}"
+CHUNKED_PREFILL_SIZE="${LLM_CHUNKED_PREFILL_SIZE:-8192}"
+KV_CACHE_DTYPE="${LLM_KV_CACHE_DTYPE:-fp8_e5m2}"
+MAMBA_FULL_MEMORY_RATIO="${LLM_MAMBA_FULL_MEMORY_RATIO:-0.1}"
+CUDA_GRAPH_MAX_BS="${LLM_CUDA_GRAPH_MAX_BS:-3}"
+
+# CUDA-graph batch list 1..max-bs (the fork's --cuda-graph-bs takes a list)
+CUDA_GRAPH_BS=()
+for ((i = 1; i <= CUDA_GRAPH_MAX_BS; i++)); do CUDA_GRAPH_BS+=("${i}"); done
+
+# Speculative decoding. DFLASH2 is the measured fastest profile on this host
+# (z-lab draft, block 8, window 2048); DSPARK is the alternative. Set
+# LLM_SPEC_ALGORITHM=none for plain target-only decode.
+SPEC_ARGS=()
+SPEC_ALGORITHM="${LLM_SPEC_ALGORITHM:-DFLASH}"
+case "${SPEC_ALGORITHM}" in
+  none|"") ;;
+  DFLASH)
+    export SGLANG_ENABLE_SPEC_V2="${SGLANG_ENABLE_SPEC_V2:-1}"
+    SPEC_ARGS+=(
+      --speculative-algorithm DFLASH
+      --speculative-draft-model-path "${MODEL_DIR}/${LLM_SPEC_DRAFT_MODEL:-z-lab/Qwen3.8-27B-DFlash2}"
+      --speculative-dflash-block-size "${LLM_SPEC_DFLASH_BLOCK_SIZE:-8}"
+      --speculative-draft-model-quantization unquant
+      --speculative-draft-window-size "${LLM_SPEC_DRAFT_WINDOW_SIZE:-2048}"
+    )
+    ;;
+  DSPARK)
+    export SGLANG_ENABLE_SPEC_V2="${SGLANG_ENABLE_SPEC_V2:-1}"
+    SPEC_ARGS+=(
+      --speculative-algorithm DSPARK
+      --speculative-draft-model-path "${MODEL_DIR}/${LLM_SPEC_DRAFT_MODEL:-RadixArk/Qwen3.8-27B-DSpark}"
+      --speculative-draft-model-quantization unquant
+      --speculative-dspark-block-size "${LLM_SPEC_DSPARK_BLOCK_SIZE:-7}"
+    )
+    ;;
+  *)
+    echo "Error: LLM_SPEC_ALGORITHM must be DFLASH, DSPARK or none (got: ${SPEC_ALGORITHM})." >&2
+    exit 1
+    ;;
+esac
+
+# Launch sglang with the fork's SM70 TileLang attention backend and
+# ${TP_SIZE}-way tensor parallelism. The working directory must stay outside
+# any sglang-V100 checkout, or Python imports the source tree instead of the
+# installed packages.
+exec sglang serve \
+  --trust-remote-code \
+  --model-path "${MODEL_DIR}/${MODEL_PATH}" \
+  --served-model-name "${MODEL_ALIAS}" \
+  --dtype float16 \
+  --kv-cache-dtype "${KV_CACHE_DTYPE}" \
+  --attention-backend tilelang_fa_v100 \
+  --linear-attn-prefill-backend tilelang \
+  --linear-attn-decode-backend triton \
+  --tensor-parallel-size "${TP_SIZE}" \
+  --mem-fraction-static "${MEM_FRACTION_STATIC}" \
+  --context-length "${CONTEXT_LENGTH}" \
+  --max-total-tokens "${MAX_TOTAL_TOKENS}" \
+  --max-running-requests "${MAX_RUNNING_REQUESTS}" \
+  --chunked-prefill-size "${CHUNKED_PREFILL_SIZE}" \
+  --mamba-full-memory-ratio "${MAMBA_FULL_MEMORY_RATIO}" \
+  --mamba-scheduler-strategy extra_buffer \
+  --cuda-graph-max-bs "${CUDA_GRAPH_MAX_BS}" \
+  --cuda-graph-bs "${CUDA_GRAPH_BS[@]}" \
+  --enable-nccl-nvls \
+  --reasoning-parser qwen3 \
+  --tool-call-parser qwen3_coder \
+  "${SPEC_ARGS[@]}" \
+  --api-key "${SGLANG_API_KEY}" \
+  --host "${HOST}" \
+  --port "${PORT}"
