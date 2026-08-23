@@ -1,12 +1,12 @@
-# llama.cpp / V100 32GB ×3 / Qwen3.8 27B
+# llama.cpp / V100 ×2 or ×3 / Qwen3.8 27B
 
-Serves the multimodal Qwen3.8 27B (GGUF) through llama.cpp's OpenAI-compatible server, split across three V100 GPUs. This is the configuration validated and benchmarked on this exact host.
+Serves the multimodal Qwen3.8 27B (GGUF) through llama.cpp's OpenAI-compatible server, split across two or three V100 GPUs. The 3-GPU profile is the configuration validated and benchmarked on this exact host.
 
 ## Target environment
 
 | Item | Value |
 | --- | --- |
-| GPU | NVIDIA Tesla V100-PCIE-32GB ×3 (96GB total, Volta / sm_70) |
+| GPU | Tesla V100-PCIE-32GB ×2 or ×3 (Volta / sm_70) |
 | CUDA | 12.8 (`/usr/local/cuda-12.8`) — **the last toolkit supporting Volta** |
 | Driver | 580.x (final series for V100) |
 | Engine | llama.cpp, built from source for sm_70 with `GGML_CUDA_FORCE_MMQ=ON` |
@@ -16,7 +16,7 @@ Serves the multimodal Qwen3.8 27B (GGUF) through llama.cpp's OpenAI-compatible s
 
 Volta does not support bf16 or FP8, which is why both the weights and the KV cache use Q8-family quantization. Flash attention is active: quantized V cache (`-ctv q8_0`) forces `-fa auto` to resolve to enabled, and FA runs on Volta through the tile kernels.
 
-## Measured performance
+## Measured performance (3-GPU host)
 
 Native `/completion` endpoint, temperature 0, short-prompt decode (`n_predict 256`), ~2.6k-token prompt processing, and 8 concurrent × 192-token generations:
 
@@ -120,12 +120,24 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 
 ## Configuration rationale
 
+The same `run` serves either GPU count; only the three values below change. The defaults are the 2-GPU profile; the 3-GPU profile is set via the env file (see [Environment variables](#environment-variables)).
+
 ### GPU allocation
 
 | Flag | Value | Rationale |
 | --- | --- | --- |
 | `-ngl 99` | all layers | Offload every layer to GPU (a value above the real layer count is the idiomatic way to say "all") |
-| `-ts 34,35,27` | 34:35:27 | Uneven on purpose. All cards are identical 32GB, but GPU2 carries fixed per-device allocations that equal splits cannot accommodate: `34,33,33` fails to start (OOM at MTP context creation) and `32,34,34` loads but crashes with a CUDA OOM during prompt processing |
+| `-ts 34,30` | 34:30 | 2-GPU split across the two cards, weighted to account for the other buffers GPU0 carries |
+| `-ts 34,35,27` | 34:35:27 | 3-GPU split. Uneven on purpose. All cards are identical 32GB, but GPU2 carries fixed per-device allocations that equal splits cannot accommodate: `34,33,33` fails to start (OOM at MTP context creation) and `32,34,34` loads but crashes with a CUDA OOM during prompt processing |
+
+### Context and slots
+
+| Flag | Value | Rationale |
+| --- | --- | --- |
+| `-np 2` / `-np 8` | 2 / 8 | Parallel slots. 2 (default) or 8 (3-GPU profile) concurrent requests |
+| `-c 524288` / `-c 1048576` | 512k / 1M | **Total** context across all slots — 256k (×2) or 128k (×3) per slot |
+| `-ctk q8_0` / `-ctv q8_0` | Q8_0 | Quantized KV cache. Roughly halves KV memory versus F16, which is what makes the context fit. On the 3-GPU profile the model is hybrid (full attention every 4th layer, SSM elsewhere — 17 attention layers of 65), so the full 1M-token KV cache costs only ~37 GiB |
+| `--no-kv-unified` | — | Keeps each slot's KV cache independent, so a long session cannot crowd out the other slot |
 
 ### Batch sizes
 
@@ -133,14 +145,6 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | --- | --- | --- |
 | `-ub` (default) | 512 | The physical batch is left at the default. `-ub 1024` does not fit (OOM), and `-ub 768` fits but measured **-19% prompt processing** — larger microbatches hurt the PCIe-pipelined split on this card |
 | `-b` (default) | 2048 | Logical batch; no measured effect |
-
-### Context and slots
-
-| Flag | Value | Rationale |
-| --- | --- | --- |
-| `-np 8` | 8 | Parallel slots — eight concurrent requests |
-| `-c 1048576` | 1M | **Total** context across all slots, i.e. 128k tokens per slot |
-| `-ctk q8_0` / `-ctv q8_0` | Q8_0 | Quantized KV cache. The model is hybrid (full attention every 4th layer, SSM elsewhere — 17 attention layers of 65), so the full 1M-token KV cache costs only ~37 GiB |
 
 ### Latency and monitoring
 
@@ -165,6 +169,15 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | `--reasoning-preserve` | Keeps the reasoning (thinking) content in the response |
 | `--jinja` | Uses the chat template embedded in the GGUF |
 | `--alias qwen3.8-27b` | Model name exposed by the API, decoupling clients from the on-disk filename |
+
+## Environment variables
+
+| Variable | Default | Rationale |
+| --- | --- | --- |
+| `CUDA_VISIBLE_DEVICES` | `0,1` | GPUs exposed to llama-server. Set `0,1,2` for the 3-GPU host (with `LLM_TENSOR_SPLIT=34,35,27`) |
+| `LLM_TENSOR_SPLIT` | `34,30` | `-ts` layer split. Set `34,35,27` for the 3-GPU host |
+| `LLM_N_PARALLEL` | `2` | `-np` parallel slots. Set `8` for the 3-GPU host |
+| `LLM_TOTAL_CTX` | `524288` | `-c` total context across all slots. Set `1048576` for the 3-GPU host |
 
 ## Authentication and networking
 

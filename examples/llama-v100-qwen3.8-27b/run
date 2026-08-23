@@ -39,18 +39,26 @@ MODEL_ALIAS="qwen3.8-27b"
 HOST="${LLM_SERV_HOST:-0.0.0.0}"
 PORT="${LLM_SERV_PORT:-8000}"
 
-# Context and parallel slots configuration (8 slots * 128k tokens)
-N_PARALLEL=8
-TOTAL_CTX=1048576
+# GPUs to use; overridable from the env file, e.g. for the 3-GPU profile
+# set CUDA_VISIBLE_DEVICES=0,1,2 together with LLM_TENSOR_SPLIT=34,35,27.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 
-# Launch llama-server with triple V100 GPU tensor split and native MTP.
-# -ts 34,35,27 is NOT a typo: equal splits OOM at load time, see README.
+# Tensor split and context profile. Defaults are the 2-GPU profile
+# (2 slots x 256k tokens). The 3-GPU validated profile, documented in the
+# README, is LLM_TENSOR_SPLIT=34,35,27 / LLM_N_PARALLEL=8 /
+# LLM_TOTAL_CTX=1048576. All overridable from the env file.
+TENSOR_SPLIT="${LLM_TENSOR_SPLIT:-34,30}"
+N_PARALLEL="${LLM_N_PARALLEL:-2}"
+TOTAL_CTX="${LLM_TOTAL_CTX:-524288}"
+
+# Launch llama-server with the V100 tensor split and native MTP. The 3-GPU
+# split 34,35,27 is NOT a typo: equal splits OOM at load time, see README.
 exec "${LLAMA_BIN}" serve \
   -m "${MODEL_DIR}/${MODEL_FILE}" \
   --mmproj "${MODEL_DIR}/${MMPROJ_FILE}" \
   --alias "${MODEL_ALIAS}" \
   -ngl 99 \
-  -ts 34,35,27 \
+  -ts "${TENSOR_SPLIT}" \
   -np "${N_PARALLEL}" \
   -c "${TOTAL_CTX}" \
   -ctk q8_0 \

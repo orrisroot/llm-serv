@@ -14,7 +14,7 @@ Commands that change the system are shown with `sudo`; everything else runs as y
 | NVIDIA driver, GPUs visible | `nvidia-smi` |
 | git | `git --version` |
 
-Both llama.cpp examples and the L40S vLLM example build their engine from source, so they need the CUDA toolkit and compilers on the host itself — or on a machine with the same CUDA version, from which only the build output is copied over. The 1Cat-vLLM example installs a prebuilt wheel and needs neither. Which version, and which extra tools, depends on the example; see the table in [step 4](#4-pick-an-example).
+The llama.cpp and the L40S vLLM examples build their engine from source, so they need the CUDA toolkit and compilers on the host itself — or on a machine with the same CUDA version, from which only the build output is copied over. The 1Cat-vLLM example installs a prebuilt wheel and needs neither. Which version, and which extra tools, depends on the example; see the table in [step 4](#4-pick-an-example).
 
 `uv` is not assumed to be present. Install it for your own account — every example uses it to fetch models, and some to build the engine:
 
@@ -75,16 +75,16 @@ Everything above is engine-independent; adding a second engine later reuses all 
 
 Everything from here depends on which example you deploy.
 
-| | [llama.cpp](../examples/llama-v100x2-qwen3.8-27b) | [llama.cpp ×3](../examples/llama-v100x3-qwen3.8-27b) | [vLLM](../examples/vllm-v100x2-qwen3.8-27b) | [vLLM ×8](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
-| --- | --- | --- | --- | --- |
-| Hardware | V100 32GB ×2 (sm_70) | V100 32GB ×3 (sm_70) | V100 32GB ×2, TP2 (sm_70) | L40S ×8 (sm_89) |
-| CUDA | 12.8 | 12.8 | 12.8 | 13.0 |
-| Extra build tools | cmake, gcc | cmake, gcc | uv + prebuilt wheel | rust, gh, Python 3.12 |
-| Engine artifact | one static binary in `bin/` | one static binary in `bin/` | a virtualenv in `.venv/` | a virtualenv in `.venv/` |
-| Model | `unsloth/Qwen3.8-27B-GGUF` | `unsloth/Qwen3.8-27B-GGUF` | `Qwen/Qwen3.8-27B-FP8` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
-| API key variable | `LLAMA_API_KEY` | `LLAMA_API_KEY` | `VLLM_API_KEY` | `VLLM_API_KEY` |
-| Served model name | `qwen3.8-27b` | `qwen3.8-27b` | `qwen3.8-27b` | `deepseek-v4-flash-0731` |
-| Instance name below | `llama` | `llama` | `vllm1cat` | `vllm` |
+| | [llama.cpp](../examples/llama-v100-qwen3.8-27b) | [vLLM](../examples/vllm-v100x2-qwen3.8-27b) | [vLLM ×8](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
+| --- | --- | --- | --- |
+| Hardware | V100 32GB ×2 / ×3 (sm_70) | V100 32GB ×2 (sm_70) | L40S ×8 (sm_89) |
+| CUDA | 12.8 | 12.8 | 13.0 |
+| Extra build tools | cmake, gcc | uv + prebuilt wheel | rust, gh, Python 3.12 |
+| Engine artifact | one static binary in `bin/` | a virtualenv in `.venv/` | a virtualenv in `.venv/` |
+| Model | `unsloth/Qwen3.8-27B-GGUF` | `Qwen/Qwen3.8-27B-FP8` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
+| API key variable | `LLAMA_API_KEY` | `VLLM_API_KEY` | `VLLM_API_KEY` |
+| Served model name | `qwen3.8-27b` | `qwen3.8-27b` | `deepseek-v4-flash-0731` |
+| Instance name below | `llama` | `vllm1cat` | `vllm` |
 
 The remaining steps write `<instance>` and `<example>` where the values from that table go. Create the instance directory:
 
@@ -98,8 +98,7 @@ An example may call for a subdirectory as well — `bin/` for llama.cpp — whic
 
 The engines differ enough that each procedure lives with its example:
 
-- [llama.cpp ×2 — Building the engine](../examples/llama-v100x2-qwen3.8-27b/README.md#building-the-engine)
-- [llama.cpp ×3 — Building the engine](../examples/llama-v100x3-qwen3.8-27b/README.md#building-the-engine)
+- [llama.cpp — Building the engine](../examples/llama-v100-qwen3.8-27b/README.md#building-the-engine)
 - [vLLM — Runtime virtualenv](../examples/vllm-v100x2-qwen3.8-27b/README.md#runtime-virtualenv)
 - [vLLM ×8 — Building the engine](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#runtime-virtualenv)
 
@@ -145,7 +144,7 @@ sudo install -o llm-serv -g llm-serv -m 0750 \
   examples/<example>/run /opt/llm-serv/<instance>/run
 ```
 
-Review the flags before starting — GPU split, context length and batching are hardcoded here by design. Paths are not: the script derives the engine and env file locations from where it is installed, so it works under any instance name.
+Review the flags before starting — the full command line is defined in `run`, with a small set of tuning values (GPU split, context length, memory) overridable from the env file. Paths are not: the script derives the engine and env file locations from where it is installed, so it works under any instance name.
 
 ## 9. Start and verify
 

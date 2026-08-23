@@ -21,11 +21,7 @@ etc/                                    ← Installed to the host as-is
   logrotate.d/llm-serv                    Log rotation policy
   tmpfiles.d/llm-serv.conf                Creates /var/log/llm-serv at boot
 examples/                               ← Reference configurations, meant to be copied
-  llama-v100x2-qwen3.8-27b/
-    README.md                             Assumptions and rationale for this setup
-    run                                   Launch script
-    env.example                           Environment file template
-  llama-v100x3-qwen3.8-27b/
+  llama-v100-qwen3.8-27b/
     README.md                             Assumptions, benchmarks, and rationale
     run                                   Launch script
     env.example                           Environment file template
@@ -203,7 +199,6 @@ The journal only records service start/stop events; inference server output is n
 
 | Directory | Engine | Hardware | Model |
 | --- | --- | --- | --- |
-| [`examples/llama-v100x2-qwen3.8-27b`](examples/llama-v100x2-qwen3.8-27b) | llama.cpp | Tesla V100 32GB ×2 / CUDA 12.8 | Qwen3.8 27B (GGUF, UD-Q8_K_XL, multimodal) |
-| [`examples/llama-v100x3-qwen3.8-27b`](examples/llama-v100x3-qwen3.8-27b) | llama.cpp (FORCE_MMQ build) | Tesla V100 32GB ×3 / CUDA 12.8 | Qwen3.8 27B (GGUF, UD-Q8_K_XL, multimodal) |
+| [`examples/llama-v100-qwen3.8-27b`](examples/llama-v100-qwen3.8-27b) | llama.cpp (FORCE_MMQ build) | Tesla V100 32GB ×2 / ×3 / CUDA 12.8 | Qwen3.8 27B (GGUF, UD-Q8_K_XL, multimodal) |
 | [`examples/vllm-l40sx8-deepseek-v4-flash-0731`](examples/vllm-l40sx8-deepseek-v4-flash-0731) | vLLM (`vllm-deepseek-v4-sm89` fork) | L40S ×8 / CUDA 13.0 | DeepSeek V4 Flash 0731 |
 | [`examples/vllm-v100x2-qwen3.8-27b`](examples/vllm-v100x2-qwen3.8-27b) | vLLM (`1Cat-vLLM` fork) | V100 32GB ×2 / CUDA 12.8 | Qwen3.8 27B (FP8) |
