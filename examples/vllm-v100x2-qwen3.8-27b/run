@@ -35,40 +35,62 @@ MODEL_DIR="/opt/llm-serv/models"
 MODEL_PATH="Qwen/Qwen3.8-27B-FP8"
 MODEL_ALIAS="qwen3.8-27b"
 
-# Tensor-parallel GPUs; overridable from the env file, e.g. for a 4-GPU host
-# with TP4
+# Tensor-parallel GPUs and degree. The degree defaults to the number of
+# visible devices, so a 4-GPU host needs only CUDA_VISIBLE_DEVICES. Both
+# overridable from the env file.
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
+if [[ -n "${LLM_TENSOR_PARALLEL_SIZE:-}" ]]; then
+  TP_SIZE="${LLM_TENSOR_PARALLEL_SIZE}"
+else
+  IFS=, read -r -a TP_DEVICES <<< "${CUDA_VISIBLE_DEVICES}"
+  TP_SIZE="${#TP_DEVICES[@]}"
+fi
 
 # Listen address; both may be overridden from the env file
 HOST="${LLM_SERV_HOST:-0.0.0.0}"
 PORT="${LLM_SERV_PORT:-8000}"
 
-# Context and concurrency profile: 8 slots x 128k tokens. The 256k x 4-slot
-# variant is documented in the README. Both overridable from the env file.
+# Context, concurrency and memory profile: 8 x 128k tokens, 0.95 memory
+# utilization. The 256k x 4-slot variant is documented in the README. All
+# overridable from the env file.
 MAX_MODEL_LEN="${LLM_MAX_MODEL_LEN:-131072}"
 MAX_NUM_SEQS="${LLM_MAX_NUM_SEQS:-8}"
+GPU_MEMORY_UTILIZATION="${LLM_GPU_MEMORY_UTILIZATION:-0.95}"
 MAX_NUM_BATCHED_TOKENS=8192
 
-# Default reasoning effort, applied to requests that do not set one. The
-# Qwen3.8 chat template accepts low, medium, xhigh (model default: xhigh).
-# Overridable from the env file.
+# Default chat-template overrides, applied to requests that do not set their
+# own. The Qwen3.8 template accepts reasoning_effort of low, medium, xhigh
+# (model default xhigh), and enable_thinking=false turns thinking off. Both
+# overridable from the env file.
 EXTRA_ARGS=()
+TEMPLATE_KWARGS=()
 if [[ -n "${LLM_REASONING_EFFORT:-}" ]]; then
   case "${LLM_REASONING_EFFORT}" in
     low|medium|xhigh) ;;
     *) echo "Error: LLM_REASONING_EFFORT must be one of low, medium, xhigh (got: ${LLM_REASONING_EFFORT})." >&2; exit 1 ;;
   esac
-  EXTRA_ARGS+=(--default-chat-template-kwargs "{\"reasoning_effort\": \"${LLM_REASONING_EFFORT}\"}")
+  TEMPLATE_KWARGS+=("\"reasoning_effort\": \"${LLM_REASONING_EFFORT}\"")
+fi
+if [[ -n "${LLM_ENABLE_THINKING:-}" ]]; then
+  case "${LLM_ENABLE_THINKING}" in
+    true|false) ;;
+    *) echo "Error: LLM_ENABLE_THINKING must be true or false (got: ${LLM_ENABLE_THINKING})." >&2; exit 1 ;;
+  esac
+  TEMPLATE_KWARGS+=("\"enable_thinking\": ${LLM_ENABLE_THINKING}")
+fi
+if (( ${#TEMPLATE_KWARGS[@]} > 0 )); then
+  EXTRA_ARGS+=(--default-chat-template-kwargs "$(IFS=,; printf '{%s}' "${TEMPLATE_KWARGS[*]}")")
 fi
 
-# Launch 1Cat-vLLM with SM70 FlashAttention and 2-way tensor parallelism.
-# The working directory must stay outside any 1Cat-vLLM source checkout, or
-# Python imports the source tree instead of the wheel's CUDA extensions.
+# Launch 1Cat-vLLM with SM70 FlashAttention and ${TP_SIZE}-way tensor
+# parallelism. The working directory must stay outside any 1Cat-vLLM source
+# checkout, or Python imports the source tree instead of the wheel's CUDA
+# extensions.
 exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
   --served-model-name "${MODEL_ALIAS}" \
   --trust-remote-code \
-  --tensor-parallel-size 2 \
-  --gpu-memory-utilization 0.95 \
+  --tensor-parallel-size "${TP_SIZE}" \
+  --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
   --max-model-len "${MAX_MODEL_LEN}" \
   --max-num-seqs "${MAX_NUM_SEQS}" \
   --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \

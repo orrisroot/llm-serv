@@ -113,8 +113,8 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 
 | Flag | Value | Rationale |
 | --- | --- | --- |
-| `--tensor-parallel-size 2` | 2 | One rank per GPU across two cards. TP4 is the fork's public reference on 4-GPU hosts — set `CUDA_VISIBLE_DEVICES` to four devices and edit `--tensor-parallel-size` in `run` |
-| `--gpu-memory-utilization 0.95` | 0.95 | ~30.2 GiB used per GPU after load; the FP8 weights leave just enough KV headroom |
+| `--tensor-parallel-size <n>` | 2 | One rank per GPU, derived from the number of visible devices. TP4 is the fork's public reference on 4-GPU hosts — set `CUDA_VISIBLE_DEVICES` to four devices (or set `LLM_TENSOR_PARALLEL_SIZE`) |
+| `--gpu-memory-utilization <f>` | 0.95 | ~30.2 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
 | `--max-model-len 131072` / `--max-num-seqs 8` | — | 8 slots × 128k. The parallelism profile: 242 tok/s aggregate at zero single-stream cost. The 4-slot × 256k profile (`LLM_MAX_MODEL_LEN=262144 LLM_MAX_NUM_SEQS=4`) serves long context at 128.6 tok/s |
 | `--max-num-batched-tokens 8192` | 8192 | Prefill batch budget from the fork's public profiles |
 | `--kv-cache-dtype fp8_e5m2` | fp8_e5m2 | Halves KV memory (830k-token cache vs 429k at FP16); the FP8 V100 KV path this fork ships |
@@ -122,6 +122,7 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | `--tool-call-parser qwen3_coder` / `--enable-auto-tool-choice` | — | OpenAI-compatible tool calling, validated with this model family |
 | `--reasoning-parser qwen3` | — | Keeps the reasoning (thinking) content in responses (in the `reasoning` field), like llama.cpp's `--reasoning-preserve` |
 | `LLM_REASONING_EFFORT` (env) | unset | Default thinking effort applied to requests that do not set one. Valid: `low`, `medium`, `xhigh` (the Qwen3.8 template's default is `xhigh`); wired through `--default-chat-template-kwargs`. A per-request `reasoning_effort` still overrides it |
+| `LLM_ENABLE_THINKING` (env) | unset | Turns thinking off entirely when set to `false` (`enable_thinking=false`), skipping the reasoning path. The model default is on |
 | `--served-model-name qwen3.8-27b` | — | Model name exposed by the API, decoupling clients from the on-disk layout |
 
 MTP speculative decoding is an opt-in in this example, matching the fork's V100 public profile: set `VLLM_1CAT_ENABLE_SM70_MTP_DEFAULTS=1` (validated on this host) or pass an explicit `--speculative-config`. Measured trade-off on this host (fp8_e5m2 KV, TP2):

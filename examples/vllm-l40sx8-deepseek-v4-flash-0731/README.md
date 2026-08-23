@@ -154,10 +154,10 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 
 | Flag | Value | Rationale |
 | --- | --- | --- |
-| `--tensor-parallel-size 8` | 8 | One rank per L40S; the model does not fit on fewer |
-| `--gpu-memory-utilization 0.88` | 0.88 | Measured ceiling on this host — 0.90 fails, 0.88 holds. The remainder absorbs activation spikes and the NCCL buffers |
-| `--max-model-len 524288` | 512k | Context length per sequence |
-| `--max-num-seqs 16` | 16 | Concurrent sequences, bounded by KV cache at this context length |
+| `--tensor-parallel-size <n>` | 8 | One rank per L40S; the model does not fit on fewer. `n` defaults to the number of visible devices; set `LLM_TENSOR_PARALLEL_SIZE` to force it |
+| `--gpu-memory-utilization <f>` | 0.88 | Measured ceiling on this host — 0.90 fails, 0.88 holds. The remainder absorbs activation spikes and the NCCL buffers. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
+| `--max-model-len <n>` | 512k | Context length per sequence. Set `LLM_MAX_MODEL_LEN` to override |
+| `--max-num-seqs <n>` | 16 | Concurrent sequences, bounded by KV cache at this context length. Set `LLM_MAX_NUM_SEQS` to override |
 | `--max-num-batched-tokens 2048` | 2048 | Caps the prefill chunk, keeping decode latency stable under long-prompt load |
 | `--kv-cache-dtype fp8_ds_mla` | FP8 | DeepSeek MLA-specific FP8 KV cache; what makes 512k context affordable |
 | `--block-size 256` | 256 | Large paged-attention blocks, matched to the MLA sparse kernel |
@@ -170,6 +170,8 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 | `--attention-backend FLASHINFER_MLA_SPARSE_DSV4` | DSA sparse attention path from the FlashInfer build in this fork |
 | `--speculative-config '{"method":"dspark",...}'` | dspark speculative decoding, 6 draft tokens, greedy draft sampling |
 | `--reasoning-parser deepseek_v4` | Splits reasoning content out of the response |
+| `LLM_REASONING_EFFORT` (env) | Default thinking effort for requests that do not set one. The DeepSeek V4 template treats `none` as off and `max`/`xhigh` as maximum; any other value falls back to the model default. Wired through `--default-chat-template-kwargs`; a per-request `reasoning_effort` still overrides it |
+| `LLM_ENABLE_THINKING` (env) | Turns thinking off entirely when set to `false` (`enable_thinking=false`), skipping the reasoning path. The model default is on |
 | `--tool-call-parser deepseek_v4` / `--enable-auto-tool-choice` | Parses the model's tool-call format and lets it pick tools itself |
 | `--served-model-name deepseek-v4-flash-0731` | Model name exposed by the API, decoupling clients from the checkout path |
 
@@ -177,7 +179,11 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 
 | Variable | Rationale |
 | --- | --- |
-| `NCCL_SHM_DISABLE=1` | Shared-memory transport is unusable between the eight ranks here; NCCL falls back to peer-to-peer |
+| `CUDA_VISIBLE_DEVICES` | Tensor-parallel GPUs. Defaults to all eight; the degree is derived from the count unless `LLM_TENSOR_PARALLEL_SIZE` is set |
+| `LLM_TENSOR_PARALLEL_SIZE` | Forces the tensor-parallel degree instead of deriving it from the device count |
+| `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` | Context length and concurrent sequences, defaulting to 512k / 16 |
+| `LLM_GPU_MEMORY_UTILIZATION` | GPU memory ceiling, defaulting to 0.88 |
+| `NCCL_SHM_DISABLE=1` | Shared-memory transport is unusable between the ranks here; NCCL falls back to peer-to-peer |
 | `FLASHINFER_DISABLE_VERSION_CHECK=1` | The FlashInfer wheel is pinned to this fork and fails the stock version check |
 | `LD_LIBRARY_PATH` | The venv's bundled shared objects (`PyNvVideoCodec`, `lib/`) followed by the CUDA 13.0 runtime |
 
