@@ -27,6 +27,16 @@ if [[ -f "${ENV_FILE}" ]]; then
   set +a
 fi
 
+# Per-instance JIT and kernel caches. The service account's $HOME is the
+# per-instance StateDirectory (/var/lib/llm-serv/<instance>), created by
+# systemd, so Triton, TileLang and FlashInfer kernels compiled here survive
+# restarts and are reused instead of recompiled. Clearing these forces a
+# clean compile.
+export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
+export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-${HOME}/.cache/flashinfer}"
+export TILELANG_CACHE_DIR="${TILELANG_CACHE_DIR:-${HOME}/.cache/tilelang}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${HOME}/.cache/triton}"
+
 # Ensure API key is configured. It reaches the server through the environment
 # (exported above), never as a command-line flag, so it stays out of ps output.
 if [[ -z "${VLLM_API_KEY:-}" ]]; then
@@ -56,11 +66,12 @@ HOST="${LLM_SERV_HOST:-0.0.0.0}"
 PORT="${LLM_SERV_PORT:-8000}"
 
 # Context, concurrency and memory profile: 16 x 512k tokens, 0.88 memory
-# utilization. All overridable from the env file.
+# utilization, 4096 tokens per scheduled batch. All overridable from the
+# env file.
 MAX_MODEL_LEN="${LLM_MAX_MODEL_LEN:-524288}"
 MAX_NUM_SEQS="${LLM_MAX_NUM_SEQS:-16}"
 GPU_MEMORY_UTILIZATION="${LLM_GPU_MEMORY_UTILIZATION:-0.88}"
-MAX_NUM_BATCHED_TOKENS=2048
+MAX_NUM_BATCHED_TOKENS="${LLM_MAX_NUM_BATCHED_TOKENS:-4096}"
 
 # Default chat-template overrides, applied to requests that do not set their
 # own. The DeepSeek V4 template treats reasoning_effort as off (none),
@@ -86,6 +97,11 @@ if (( ${#TEMPLATE_KWARGS[@]} > 0 )); then
   EXTRA_ARGS+=(--default-chat-template-kwargs "$(IFS=,; printf '{%s}' "${TEMPLATE_KWARGS[*]}")")
 fi
 
+# Speculative decoding: dspark, depth overridable from the env file. The
+# acceptance rate for this draft model falls off sharply past ~4-5 draft
+# positions, so 7 mostly wastes draft compute.
+SPEC_NUM_TOKENS="${LLM_NUM_SPECULATIVE_TOKENS:-4}"
+
 # Launch vLLM with ${TP_SIZE}-way tensor parallelism, DSA sparse attention
 # and dspark speculative decoding
 exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
@@ -102,7 +118,7 @@ exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
   --tool-call-parser deepseek_v4 \
   --enable-auto-tool-choice \
   --reasoning-parser deepseek_v4 \
-  --speculative-config '{"method":"dspark","num_speculative_tokens":7,"draft_sample_method":"probabilistic"}' \
+  --speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":${SPEC_NUM_TOKENS},\"draft_sample_method\":\"probabilistic\"}" \
   "${EXTRA_ARGS[@]}" \
   --host "${HOST}" \
   --port "${PORT}"

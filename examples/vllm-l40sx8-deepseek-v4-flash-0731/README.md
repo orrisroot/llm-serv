@@ -185,7 +185,7 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 | `--gpu-memory-utilization <f>` | 0.88 | Measured ceiling on this host — 0.90 fails, 0.88 holds. The remainder absorbs activation spikes and the NCCL buffers. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
 | `--max-model-len <n>` | 512k | Context length per sequence. Set `LLM_MAX_MODEL_LEN` to override |
 | `--max-num-seqs <n>` | 16 | Concurrent sequences, bounded by KV cache at this context length. Set `LLM_MAX_NUM_SEQS` to override |
-| `--max-num-batched-tokens 2048` | 2048 | Caps the prefill chunk, keeping decode latency stable under long-prompt load |
+| `--max-num-batched-tokens 4096` | 4096 | Per-step scheduling budget; high enough to absorb the spec-decode slot overhead (see the env table) without letting prefill chunks stretch decode latency under long-prompt load |
 | `--kv-cache-dtype fp8_ds_mla` | FP8 | DeepSeek MLA-specific FP8 KV cache; what makes 512k context affordable |
 | `--block-size 256` | 256 | Large paged-attention blocks, matched to the MLA sparse kernel |
 
@@ -195,7 +195,7 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 | --- | --- |
 | `--trust-remote-code` | The model ships custom modelling code that vLLM must import |
 | `--attention-backend FLASHINFER_MLA_SPARSE_DSV4` | DSA sparse attention path from the FlashInfer build in this fork |
-| `--speculative-config '{"method":"dspark",...}'` | dspark speculative decoding, 7 draft tokens, probabilistic draft sampling |
+| `--speculative-config '{"method":"dspark",...}'` | dspark speculative decoding, 4 draft tokens, probabilistic draft sampling |
 | `--reasoning-parser deepseek_v4` | Splits reasoning content out of the response |
 | `LLM_REASONING_EFFORT` (env) | Default thinking effort for requests that do not set one. The DeepSeek V4 template treats `none` as off and `max`/`xhigh` as maximum; any other value falls back to the model default. Wired through `--default-chat-template-kwargs`; a per-request `reasoning_effort` still overrides it |
 | `LLM_ENABLE_THINKING` (env) | Turns thinking off entirely when set to `false` (`enable_thinking=false`), skipping the reasoning path. The model default is on |
@@ -209,7 +209,10 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 | `CUDA_VISIBLE_DEVICES` | Tensor-parallel GPUs. Defaults to all eight; the degree is derived from the count unless `LLM_TENSOR_PARALLEL_SIZE` is set |
 | `LLM_TENSOR_PARALLEL_SIZE` | Forces the tensor-parallel degree instead of deriving it from the device count |
 | `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` | Context length and concurrent sequences, defaulting to 512k / 16 |
+| `LLM_MAX_NUM_BATCHED_TOKENS` | Per-step scheduling budget, defaulting to 4096. Needs to fit the spec-decode overhead — roughly `max_num_seqs × (1 + num_speculative_tokens)` — or vLLM caps `max_num_scheduled_tokens` below the budget and batch throughput suffers |
+| `LLM_NUM_SPECULATIVE_TOKENS` | DSpark draft depth, defaulting to 4. Acceptance falls off sharply past ~4-5 positions for this draft model, so the old 7 mostly wasted draft compute |
 | `LLM_GPU_MEMORY_UTILIZATION` | GPU memory ceiling, defaulting to 0.88 |
+| `TILELANG_CACHE_DIR` / `TRITON_CACHE_DIR` / `FLASHINFER_WORKSPACE_BASE` | JIT kernel caches, pinned under the per-instance `$HOME` (`/var/lib/llm-serv/<instance>/.cache/`) so Triton, TileLang and FlashInfer kernels compiled on one start are reused on the next instead of recompiled |
 | `NCCL_SHM_DISABLE=1` | Shared-memory transport is unusable between the ranks here; NCCL falls back to peer-to-peer |
 | `FLASHINFER_DISABLE_VERSION_CHECK=1` | The FlashInfer wheel is pinned to this fork and fails the stock version check |
 | `LD_LIBRARY_PATH` | The venv's bundled shared objects (`PyNvVideoCodec`, `lib/`) followed by the CUDA 13.2 runtime |
