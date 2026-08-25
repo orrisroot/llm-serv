@@ -48,7 +48,7 @@ rm -rf gh_2.97.0_linux_amd64 gh_2.97.0_linux_amd64.tar.gz
 
 ## Building the engine
 
-The previous release wheel was missing [commit `26d02fd`](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89/commit/26d02fdbbd3cbaf07e8bb94998925c78b5dbe215) (PR #51, the SM89 paged-MQA-logits fix), without which the server did not run. The 2026-08-22 release ([`v0.23.1rc1.dev904-g998fd644b-cu132-sm89`](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89/releases/tag/v0.23.1rc1.dev904-g998fd644b-cu132-sm89)) includes it, so the release wheels now run as-is; this example still compiles the engine wheel from the fork's HEAD, in a scratch directory as your normal user:
+This example compiles the engine wheel from the fork's HEAD in a scratch directory as your normal user:
 
 ```sh
 git clone https://github.com/yhfgyyf/vllm-deepseek-v4-sm89.git
@@ -125,6 +125,32 @@ sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
 
 rm -rf /tmp/vllm-sm89-release
 ```
+
+### FlashInfer TP8 patch
+
+The fork bundles `flashinfer 0.6.17+sm89.1`, whose sparse-MLA prefill kernel only handles `num_heads ≥ 16`. At TP=8, the 64 attention heads divide into 8 per rank, and the kernel rejects the configuration. Backport the prefill kernel fix from [upstream flashinfer#4380](https://github.com/flashinfer-ai/flashinfer/pull/4380) (commit `24d7dfb2`) to enable `num_heads=8`.
+
+The four files below are **adapted** from that commit, not verbatim upstream copies: they extend dispatch to `page_block_size ∈ {64, 256}` and add SM89 (`SPARSE_MLA_USE_SM89_PRIMS`) conditionals that this fork needs. Installing the verbatim upstream files instead would silently drop `page_block_size=256` support. Always use these patched copies, and only update them by re-adapting the newer upstream sources.
+
+The four patched source files live alongside this README:
+
+```sh
+FLASHINFER_DATA=/opt/llm-serv/vllm/.venv/lib/python3.12/site-packages/flashinfer/data
+
+sudo cp patches/flashinfer/csrc/sparse_mla_sm120_prefill.cu    "$FLASHINFER_DATA/csrc/"
+sudo cp patches/flashinfer/csrc/sparse_mla_sm120_decode_dsv4.cu "$FLASHINFER_DATA/csrc/"
+sudo cp patches/flashinfer/csrc/sparse_mla_sm120_jit_binding.cu "$FLASHINFER_DATA/csrc/"
+sudo cp patches/flashinfer/include/flashinfer/attention/sparse_mla_sm120/prefill_kernel.cuh \
+            "$FLASHINFER_DATA/include/flashinfer/attention/sparse_mla_sm120/"
+```
+
+Fresh installs need no further steps — the JIT cache is empty and the patched sources are compiled on first start. When updating an existing installation, clear the cache so the patched sources are recompiled:
+
+```sh
+sudo rm -rf /var/lib/llm-serv/vllm/.cache/flashinfer
+```
+
+The patch can be dropped once the fork updates its bundled flashinfer to a release that includes the upstream fix.
 
 ### Scripts
 
