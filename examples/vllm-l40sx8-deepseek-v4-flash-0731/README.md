@@ -9,7 +9,7 @@ vLLM is not installed from PyPI here. Ada (sm_89) support for this model comes f
 | Item | Value |
 | --- | --- |
 | GPU | NVIDIA L40S ×8 (Ada / sm_89) |
-| CUDA | 13.0 (`/usr/local/cuda-13.0`) |
+| CUDA | 13.2 (`/usr/local/cuda-13.2`) |
 | Python | 3.12 |
 | Engine | `yhfgyyf/vllm-deepseek-v4-sm89`, built from source |
 | Model | `deepseek-ai/DeepSeek-V4-Flash-0731` |
@@ -48,7 +48,7 @@ rm -rf gh_2.97.0_linux_amd64 gh_2.97.0_linux_amd64.tar.gz
 
 ## Building the engine
 
-The published release wheel is missing [commit `26d02fd`](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89/commit/26d02fdbbd3cbaf07e8bb94998925c78b5dbe215), without which the server does not run. The engine therefore has to be compiled from the fork's HEAD, in a scratch directory as your normal user:
+The previous release wheel was missing [commit `26d02fd`](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89/commit/26d02fdbbd3cbaf07e8bb94998925c78b5dbe215) (PR #51, the SM89 paged-MQA-logits fix), without which the server did not run. The 2026-08-22 release ([`v0.23.1rc1.dev904-g998fd644b-cu132-sm89`](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89/releases/tag/v0.23.1rc1.dev904-g998fd644b-cu132-sm89)) includes it, so the release wheels now run as-is; this example still compiles the engine wheel from the fork's HEAD, in a scratch directory as your normal user:
 
 ```sh
 git clone https://github.com/yhfgyyf/vllm-deepseek-v4-sm89.git
@@ -56,21 +56,21 @@ cd vllm-deepseek-v4-sm89
 
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install torch==2.11.0 --torch-backend=cu130 \
+uv pip install torch==2.13.0 --torch-backend=cu130 \
   -i https://pypi.tuna.tsinghua.edu.cn/simple \
   --extra-index-url https://download.pytorch.org/whl/cu130
-uv pip install -r requirements/build/cuda.txt
+uv pip install -r requirements/build/cuda.txt --torch-backend=cu130
 
-export CUDA_HOME=/usr/local/cuda-13.0
+export CUDA_HOME=/usr/local/cuda-13.2
 export PATH="$CUDA_HOME/bin:$PATH"
 export VLLM_TARGET_DEVICE=cuda
-export VLLM_MAIN_CUDA_VERSION=13.0
+export VLLM_MAIN_CUDA_VERSION=13.2
 
 # Version stamp, built from the fork's release tag plus the commits since it
-tag=$(git describe --tags --abbrev=0)     # v0.23.1rc1.dev904-g8e321cc4f-cu130-sm89
+tag=$(git describe --tags --abbrev=0)     # v0.23.1rc1.dev904-g998fd644b-cu132-sm89
 distance=$(git rev-list --count "${tag}..HEAD")
 base=${tag#v}; base=${base%%-*}           # 0.23.1rc1.dev904
-export VLLM_VERSION_OVERRIDE="${base%.dev*}.dev$(( ${base#*.dev} + distance ))+g$(git rev-parse --short=9 HEAD).cu130"
+export VLLM_VERSION_OVERRIDE="${base%.dev*}.dev$(( ${base#*.dev} + distance ))+g$(git rev-parse --short=9 HEAD).cu132"
 
 export TORCH_CUDA_ARCH_LIST="8.9+PTX"
 export MAX_JOBS=16 NVCC_THREADS=2
@@ -81,13 +81,13 @@ deactivate
 cd ..
 ```
 
-The fork tags its releases as `v<version>-g<hash>-cu130-sm89`, which setuptools-scm cannot parse — hence the override, rather than letting the build compute its own version. The tag must be present, so run `git fetch --tags` if the clone does not have it.
+The fork tags its releases as `v<version>-g<hash>-cu132-sm89`, which setuptools-scm cannot parse — hence the override, rather than letting the build compute its own version. The tag must be present, so run `git fetch --tags` if the clone does not have it.
 
 | Variable | Rationale |
 | --- | --- |
 | `TORCH_CUDA_ARCH_LIST="8.9+PTX"` | Ada only, plus PTX so the kernels still load on newer cards |
-| `VLLM_MAIN_CUDA_VERSION=13.0` | Matches the CUDA 13.0 toolkit and the `cu130` torch build |
-| `VLLM_VERSION_OVERRIDE` | Stamps the wheel. Checked out at the tag above it yields `0.23.1rc1.dev904+g8e321cc4f.cu130`, and the dev counter keeps climbing with each commit past the tag. The `.cu130` local segment is what the install glob below matches |
+| `VLLM_MAIN_CUDA_VERSION=13.2` | Matches the CUDA 13.2 toolkit and the `cu130` torch build |
+| `VLLM_VERSION_OVERRIDE` | Stamps the wheel. Checked out at the tag above it yields `0.23.1rc1.dev904+g998fd644b.cu132`, and the dev counter keeps climbing with each commit past the tag. The `.cu132` local segment is what the install glob below matches |
 | `MAX_JOBS=16` / `NVCC_THREADS=2` | Caps build parallelism so the compile does not exhaust host memory |
 
 ## Installation
@@ -103,22 +103,25 @@ sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
   uv venv --python 3.12 --seed /opt/llm-serv/vllm/.venv
 ```
 
-Install the base environment from the fork's release wheels, then overwrite vLLM itself with the wheel just compiled. The release wheel has to go in first: it is what pulls vLLM's dependency tree, which the final `--no-deps` install deliberately leaves alone so the pinned versions survive.
+Install the base environment from the fork's release wheels, then overwrite vLLM itself with the wheel just compiled. The release wheel has to go in first: it is what pulls vLLM's dependency tree, which the final `--no-deps` install deliberately leaves alone so the pinned versions survive. The vLLM, FlashInfer-python and FlashInfer-cubin wheels must come from the same release, so all three are pulled by `gh release download`:
 
 ```sh
 gh release download --repo yhfgyyf/vllm-deepseek-v4-sm89 \
-  --pattern 'flashinfer_python-0.6.14*sm89*.whl' \
-  --pattern 'vllm-*.cu130-cp312-cp312-linux_x86_64.whl' \
+  --pattern 'flashinfer_cubin-0.6.17-*.whl' \
+  --pattern 'flashinfer_python-0.6.17*sm89*.whl' \
+  --pattern 'vllm-*.cu132-cp312-cp312-linux_x86_64.whl' \
   --dir /tmp/vllm-sm89-release
 
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
-  torch==2.11.0 flashinfer-cubin==0.6.13 --torch-backend=cu130
+  torch==2.13.0 --torch-backend=cu130
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
-  /tmp/vllm-sm89-release/flashinfer_python-0.6.14*sm89*.whl
+  /tmp/vllm-sm89-release/flashinfer_cubin-0.6.17-*.whl
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
-  /tmp/vllm-sm89-release/vllm-*.cu130-cp312-cp312-linux_x86_64.whl --torch-backend=cu130
+  /tmp/vllm-sm89-release/flashinfer_python-0.6.17*sm89*.whl
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
-  --force-reinstall --no-deps ./vllm-deepseek-v4-sm89/dist/vllm-*.cu130-*.whl
+  /tmp/vllm-sm89-release/vllm-*.cu132-cp312-cp312-linux_x86_64.whl --torch-backend=cu130
+sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm/.venv uv pip install \
+  --force-reinstall --no-deps ./vllm-deepseek-v4-sm89/dist/vllm-*.cu132-*.whl
 
 rm -rf /tmp/vllm-sm89-release
 ```
@@ -168,7 +171,7 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 | --- | --- |
 | `--trust-remote-code` | The model ships custom modelling code that vLLM must import |
 | `--attention-backend FLASHINFER_MLA_SPARSE_DSV4` | DSA sparse attention path from the FlashInfer build in this fork |
-| `--speculative-config '{"method":"dspark",...}'` | dspark speculative decoding, 6 draft tokens, greedy draft sampling |
+| `--speculative-config '{"method":"dspark",...}'` | dspark speculative decoding, 7 draft tokens, probabilistic draft sampling |
 | `--reasoning-parser deepseek_v4` | Splits reasoning content out of the response |
 | `LLM_REASONING_EFFORT` (env) | Default thinking effort for requests that do not set one. The DeepSeek V4 template treats `none` as off and `max`/`xhigh` as maximum; any other value falls back to the model default. Wired through `--default-chat-template-kwargs`; a per-request `reasoning_effort` still overrides it |
 | `LLM_ENABLE_THINKING` (env) | Turns thinking off entirely when set to `false` (`enable_thinking=false`), skipping the reasoning path. The model default is on |
@@ -185,7 +188,7 @@ Loading a model of this size across eight GPUs takes several minutes; follow it 
 | `LLM_GPU_MEMORY_UTILIZATION` | GPU memory ceiling, defaulting to 0.88 |
 | `NCCL_SHM_DISABLE=1` | Shared-memory transport is unusable between the ranks here; NCCL falls back to peer-to-peer |
 | `FLASHINFER_DISABLE_VERSION_CHECK=1` | The FlashInfer wheel is pinned to this fork and fails the stock version check |
-| `LD_LIBRARY_PATH` | The venv's bundled shared objects (`PyNvVideoCodec`, `lib/`) followed by the CUDA 13.0 runtime |
+| `LD_LIBRARY_PATH` | The venv's bundled shared objects (`PyNvVideoCodec`, `lib/`) followed by the CUDA 13.2 runtime |
 
 ## Authentication and networking
 

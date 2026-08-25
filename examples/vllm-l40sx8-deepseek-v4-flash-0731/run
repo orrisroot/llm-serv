@@ -7,7 +7,7 @@ INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTANCE="$(basename -- "${INSTANCE_DIR}")"
 
 # CUDA and virtualenv environment configuration
-export CUDA_HOME="/usr/local/cuda-13.0"
+export CUDA_HOME="/usr/local/cuda-13.2"
 export VIRTUAL_ENV="${INSTANCE_DIR}/.venv"
 export PATH="${CUDA_HOME}/bin:${VIRTUAL_ENV}/bin:${PATH}"
 export LD_LIBRARY_PATH="${VIRTUAL_ENV}/lib/python3.12/site-packages/PyNvVideoCodec:${VIRTUAL_ENV}/lib:${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -102,7 +102,7 @@ exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
   --tool-call-parser deepseek_v4 \
   --enable-auto-tool-choice \
   --reasoning-parser deepseek_v4 \
-  --speculative-config '{"method":"dspark","num_speculative_tokens":6,"draft_sample_method":"greedy"}' \
+  --speculative-config '{"method":"dspark","num_speculative_tokens":7,"draft_sample_method":"probabilistic"}' \
   "${EXTRA_ARGS[@]}" \
   --host "${HOST}" \
   --port "${PORT}"

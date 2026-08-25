@@ -82,7 +82,7 @@ Everything from here depends on which example you deploy.
 | | [llama.cpp](../examples/llama-v100-qwen3.8-27b) | [vLLM](../examples/vllm-v100x2-qwen3.8-27b) | [SGLang](../examples/sglang-v100x2-qwen3.8-27b) | [vLLM ×8](../examples/vllm-l40sx8-deepseek-v4-flash-0731) |
 | --- | --- | --- | --- | --- |
 | Hardware | V100 32GB ×2 / ×3 (sm_70) | V100 32GB ×2 (sm_70) | V100 32GB ×2 (sm_70) | L40S ×8 (sm_89) |
-| CUDA | 12.8 | 12.8 | 12.8 | 13.0 |
+| CUDA | 12.8 | 12.8 | 12.8 | 13.2 |
 | Extra build tools | cmake, gcc | uv + prebuilt wheel | rust, protoc, uv | rust, gh, Python 3.12 |
 | Engine artifact | one static binary in `bin/` | a virtualenv in `.venv/` | a virtualenv in `.venv/` built from source | a virtualenv in `.venv/` |
 | Model | `unsloth/Qwen3.8-27B-GGUF` | `Qwen/Qwen3.8-27B-FP8` | `Qwen/Qwen3.8-27B-FP8` | `deepseek-ai/DeepSeek-V4-Flash-0731` |
