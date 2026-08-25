@@ -47,7 +47,7 @@ sudo usermod -aG <group> llm-serv            # only if needed
 ## 2. Directories
 
 ```sh
-sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv /opt/llm-serv/models
+sudo install -d -m 0755 -o root -g root /opt/llm-serv /opt/llm-serv/models
 sudo install -d -m 0750 -o root     -g llm-serv /etc/llm-serv
 ```
 
@@ -93,7 +93,7 @@ Everything from here depends on which example you deploy.
 The remaining steps write `<instance>` and `<example>` where the values from that table go. Create the instance directory:
 
 ```sh
-sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/<instance>
+sudo install -d -m 0755 -o root -g root /opt/llm-serv/<instance>
 ```
 
 An example may call for a subdirectory as well — `bin/` for llama.cpp — which its README covers.
@@ -114,13 +114,11 @@ Two rules apply to both, and account for most of the failures at this step:
 
 ## 6. Models
 
-The same shape for both: fetch into the shared store under the upstream org and repository name, then hand the files to the service account. The example README gives the exact repository and, for llama.cpp, which files to pick out of it.
+The same shape for both: fetch into the shared store under the upstream org and repository name. The store is root-owned and the service account only needs to read it, so nothing is handed over. The example README gives the exact repository and, for llama.cpp, which files to pick out of it.
 
 ```sh
 sudo env "PATH=$PATH" uvx hf download <org>/<repo> \
   --local-dir /opt/llm-serv/models/<org>/<repo>/
-
-sudo chown -R llm-serv:llm-serv /opt/llm-serv/models/<org>
 ```
 
 The store is not writable by your account, hence `sudo`; `env "PATH=$PATH"` keeps `uvx` reachable, since `sudo` drops `~/.local/bin` from the path. Weights run to tens of GB, so check `/opt` has room. Confirm the service account can read what landed:
@@ -132,7 +130,7 @@ sudo -u llm-serv ls -l /opt/llm-serv/models/<org>/<repo>/
 ## 7. Environment file
 
 ```sh
-sudo install -o llm-serv -g llm-serv -m 0640 \
+sudo install -o root -g llm-serv -m 0640 \
   examples/<example>/env.example /etc/llm-serv/<instance>.env
 
 sudoedit /etc/llm-serv/<instance>.env
@@ -145,7 +143,7 @@ The same file accepts `LLM_SERV_HOST` and `LLM_SERV_PORT`. Every example default
 ## 8. Launch script
 
 ```sh
-sudo install -o llm-serv -g llm-serv -m 0750 \
+sudo install -o root -g llm-serv -m 0750 \
   examples/<example>/run /opt/llm-serv/<instance>/run
 ```
 
@@ -234,7 +232,7 @@ Read the exit status from `systemctl status llm-serv@<instance>`. systemd's own 
 | `200/CHDIR` | `/opt/llm-serv/<instance>/` missing | Step 4 |
 | `203/EXEC` | `run` not executable, or wrong shebang | `sudo chmod 0750 /opt/llm-serv/<instance>/run` |
 | `Error: <ENGINE>_API_KEY is not set.` in stderr | env file missing, or unreadable by `llm-serv` | Step 7; check ownership and `0640` |
-| Permission denied on a model or the engine | Files owned by root without group read | `sudo chown -R llm-serv:llm-serv` the offending path |
+| Permission denied on a model or the engine | Files owned by root without group read | `sudo chown -R root:llm-serv` the offending path |
 | `bad interpreter: Permission denied` | The virtualenv links to an interpreter `llm-serv` cannot reach | `readlink -f <venv>/bin/python3`; reinstall it somewhere readable (step 5) |
 | `start request repeated too quickly` | 3 failures within 300s tripped the rate limit | Fix the cause, then `sudo systemctl reset-failed llm-serv@<instance>` |
 | CUDA out of memory during load | Context or memory share too large for the cards | llama.cpp: lower `LLM_TOTAL_CTX` (`-c`) or retune `LLM_TENSOR_SPLIT` (`-ts`). vLLM: lower `LLM_GPU_MEMORY_UTILIZATION` or `LLM_MAX_MODEL_LEN` |

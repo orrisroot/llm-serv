@@ -50,8 +50,8 @@ Directories that only need to exist — `/opt/llm-serv`, `/etc/llm-serv`, `/var/
 | `etc/systemd/system/llm-serv@.service` | same | `0644 root:root` |
 | `etc/logrotate.d/llm-serv` | same | `0644 root:root` |
 | `etc/tmpfiles.d/llm-serv.conf` | same | `0644 root:root` |
-| `examples/<name>/run` | `/opt/llm-serv/<instance>/run` | `0750 llm-serv:llm-serv` |
-| `examples/<name>/env.example` | `/etc/llm-serv/<instance>.env` | `0640 llm-serv:llm-serv` |
+| `examples/<name>/run` | `/opt/llm-serv/<instance>/run` | `0750 root:llm-serv` |
+| `examples/<name>/env.example` | `/etc/llm-serv/<instance>.env` | `0640 root:llm-serv` |
 | (untracked) | `/opt/llm-serv/models/` | shared model store |
 | (created by tmpfiles.d) | `/var/log/llm-serv/` | `0750 root:root` |
 | (created by systemd) | `/var/lib/llm-serv/<instance>/` | `0755 llm-serv:llm-serv` |
@@ -75,7 +75,7 @@ If the NVIDIA device nodes on the host are not world-accessible, add the account
 ### Directories
 
 ```sh
-sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv /opt/llm-serv/models
+sudo install -d -m 0755 -o root -g root /opt/llm-serv /opt/llm-serv/models
 sudo install -d -m 0750 -o root     -g llm-serv /etc/llm-serv
 ```
 
@@ -126,9 +126,9 @@ Services run as the dedicated `llm-serv` user, so model files and engine binarie
 ## Adding a new configuration
 
 1. Copy the closest match from `examples/` and adjust `run` (model paths, engine-specific flags), setting tuning values like GPU split and context in the env file.
-2. Create the instance directory: `sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/<instance>`.
-3. Install `run` to `/opt/llm-serv/<instance>/run` (`0750 llm-serv:llm-serv`).
-4. Create `/etc/llm-serv/<instance>.env` (`0640 llm-serv:llm-serv`) for the API key, and for `LLM_SERV_HOST`/`LLM_SERV_PORT` if the defaults do not suit.
+2. Create the instance directory: `sudo install -d -m 0755 -o root -g root /opt/llm-serv/<instance>`.
+3. Install `run` to `/opt/llm-serv/<instance>/run` (`0750 root:llm-serv`).
+4. Create `/etc/llm-serv/<instance>.env` (`0640 root:llm-serv`) for the API key, and for `LLM_SERV_HOST`/`LLM_SERV_PORT` if the defaults do not suit.
 5. Start it with `sudo systemctl enable --now llm-serv@<instance>`. No `daemon-reload` is needed, since the unit itself is unchanged.
 
 To keep the configuration in this repository as well, add it under `examples/<engine>-<hardware>-<model>/` and document its assumptions — GPU layout, CUDA version, model, and how the engine binary was built — in a `README.md` alongside it.

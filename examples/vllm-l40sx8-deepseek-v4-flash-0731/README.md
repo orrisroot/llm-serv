@@ -22,7 +22,7 @@ The host must already be provisioned — service account, shared directories, an
 Pick an instance name — `vllm` throughout this document — and create its directory:
 
 ```sh
-sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/vllm
+sudo install -d -m 0755 -o root -g root /opt/llm-serv/vllm
 ```
 
 `run` derives the virtualenv and env file paths from its own install location, so any instance name works without editing the script.
@@ -129,8 +129,8 @@ rm -rf /tmp/vllm-sm89-release
 ### Scripts
 
 ```sh
-sudo install -o llm-serv -g llm-serv -m 0750 run         /opt/llm-serv/vllm/run
-sudo install -o llm-serv -g llm-serv -m 0640 env.example /etc/llm-serv/vllm.env
+sudo install -o root -g llm-serv -m 0750 run         /opt/llm-serv/vllm/run
+sudo install -o root -g llm-serv -m 0640 env.example /etc/llm-serv/vllm.env
 sudoedit /etc/llm-serv/vllm.env   # replace the placeholder with the real key
 ```
 
@@ -139,8 +139,6 @@ sudoedit /etc/llm-serv/vllm.env   # replace the placeholder with the real key
 ```sh
 sudo env "PATH=$PATH" uvx hf download deepseek-ai/DeepSeek-V4-Flash-0731 \
   --local-dir /opt/llm-serv/models/deepseek-ai/DeepSeek-V4-Flash-0731/
-
-sudo chown -R llm-serv:llm-serv /opt/llm-serv/models/deepseek-ai
 ```
 
 ### Start

@@ -35,7 +35,7 @@ The host must already be provisioned — service account, shared directories, an
 Pick an instance name — `vllm1cat` throughout this document — and create its directory:
 
 ```sh
-sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/vllm1cat
+sudo install -d -m 0755 -o root -g root /opt/llm-serv/vllm1cat
 ```
 
 `run` derives the venv and env file paths from its own install location, so any instance name works without editing the script.
@@ -86,8 +86,8 @@ PY
 Install this directory's contents into place:
 
 ```sh
-sudo install -o llm-serv -g llm-serv -m 0750 run         /opt/llm-serv/vllm1cat/run
-sudo install -o llm-serv -g llm-serv -m 0640 env.example /etc/llm-serv/vllm1cat.env
+sudo install -o root -g llm-serv -m 0750 run         /opt/llm-serv/vllm1cat/run
+sudo install -o root -g llm-serv -m 0640 env.example /etc/llm-serv/vllm1cat.env
 sudoedit /etc/llm-serv/vllm1cat.env   # replace the placeholder with the real key
 ```
 
@@ -98,7 +98,6 @@ Fetch the weights into the shared model store:
 ```sh
 sudo env "PATH=$PATH" uvx hf download Qwen/Qwen3.8-27B-FP8 \
   --local-dir /opt/llm-serv/models/Qwen/Qwen3.8-27B-FP8/
-sudo chown -R llm-serv:llm-serv /opt/llm-serv/models/Qwen
 ```
 
 ### Start

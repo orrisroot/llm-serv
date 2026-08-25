@@ -34,7 +34,7 @@ The host must already be provisioned — service account, shared directories, an
 Pick an instance name — `llama` throughout this document — and create its directory:
 
 ```sh
-sudo install -d -m 0755 -o llm-serv -g llm-serv /opt/llm-serv/llama /opt/llm-serv/llama/bin
+sudo install -d -m 0755 -o root -g root /opt/llm-serv/llama /opt/llm-serv/llama/bin
 ```
 
 `run` derives the engine binary and env file paths from its own install location, so any instance name works without editing the script.
@@ -81,8 +81,8 @@ The CUDA runtime libraries are still linked dynamically, which is why `run` re-e
 Install this directory's contents into place:
 
 ```sh
-sudo install -o llm-serv -g llm-serv -m 0750 run         /opt/llm-serv/llama/run
-sudo install -o llm-serv -g llm-serv -m 0640 env.example /etc/llm-serv/llama.env
+sudo install -o root -g llm-serv -m 0750 run         /opt/llm-serv/llama/run
+sudo install -o root -g llm-serv -m 0640 env.example /etc/llm-serv/llama.env
 sudoedit /etc/llm-serv/llama.env   # replace the placeholder with the real key
 ```
 
@@ -104,11 +104,6 @@ The resulting layout, which `run` refers to by these exact paths:
 /opt/llm-serv/models/unsloth/Qwen3.8-27B-GGUF/mmproj-F16.gguf
 ```
 
-Hand the files to the service account:
-
-```sh
-sudo chown -R llm-serv:llm-serv /opt/llm-serv/models/unsloth
-```
 
 ### Start
 
