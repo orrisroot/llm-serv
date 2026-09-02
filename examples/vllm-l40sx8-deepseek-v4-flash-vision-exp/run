@@ -101,7 +101,7 @@ fi
 
 # Speculative decoding: dspark, depth overridable from the env file. The
 # acceptance rate for this draft model falls off sharply past ~4-5 draft
-# positions; the vision profile validated on this host uses 3.
+# positions, so the default is 3.
 SPEC_NUM_TOKENS="${LLM_NUM_SPECULATIVE_TOKENS:-3}"
 
 # Launch vLLM with ${TP_SIZE}-way tensor parallelism, DSA sparse attention,
