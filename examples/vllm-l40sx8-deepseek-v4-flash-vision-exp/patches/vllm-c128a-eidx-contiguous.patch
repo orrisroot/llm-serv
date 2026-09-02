@@ -1,0 +1,12 @@
+diff --git a/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py b/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+--- a/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
++++ b/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+@@ -792,7 +792,7 @@
+                 )
+                 extra_sparse_indices = global_indices.view(num_decode_tokens, 1, -1)
+             else:
+-                extra_sparse_indices = attn_metadata.c128a_global_decode_topk_indices
++                extra_sparse_indices = attn_metadata.c128a_global_decode_topk_indices.contiguous()
+                 extra_sparse_lengths = attn_metadata.c128a_decode_topk_lens
+ 
+         swa_indices = swa_metadata.decode_swa_indices

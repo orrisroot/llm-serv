@@ -29,6 +29,11 @@ examples/                               ← Reference configurations, meant to b
     README.md                             Assumptions and rationale for this setup
     run                                   Launch script
     env.example                           Environment file template
+  vllm-l40sx8-deepseek-v4-flash-vision-exp/
+    README.md                             Assumptions and rationale for this setup
+    run                                   Launch script
+    env.example                           Environment file template
+    patches/                              Patch applied to the vLLM wheel at install
   vllm-v100x2-qwen3.8-27b/
     README.md                             Assumptions, benchmarks, and rationale
     run                                   Launch script
@@ -207,5 +212,6 @@ The journal only records service start/stop events; inference server output is n
 | --- | --- | --- | --- |
 | [`examples/llama-v100-qwen3.8-27b`](examples/llama-v100-qwen3.8-27b) | llama.cpp (FORCE_MMQ build) | Tesla V100 32GB ×2 / ×3 / CUDA 12.8 | Qwen3.8 27B (GGUF, UD-Q8_K_XL, multimodal) |
 | [`examples/vllm-l40sx8-deepseek-v4-flash-0731`](examples/vllm-l40sx8-deepseek-v4-flash-0731) | vLLM (`vllm-deepseek-v4-sm89` fork) | L40S ×8 / CUDA 13.2 | DeepSeek V4 Flash 0731 |
+| [`examples/vllm-l40sx8-deepseek-v4-flash-vision-exp`](examples/vllm-l40sx8-deepseek-v4-flash-vision-exp) | vLLM (`vllm-deepseek-v4-sm89` fork, vision7) | L40S ×8 / CUDA 13.2 | DeepSeek V4 Flash Vision Exp |
 | [`examples/vllm-v100x2-qwen3.8-27b`](examples/vllm-v100x2-qwen3.8-27b) | vLLM (`1Cat-vLLM` fork) | V100 32GB ×2 / CUDA 12.8 | Qwen3.8 27B (FP8) |
 | [`examples/sglang-v100x2-qwen3.8-27b`](examples/sglang-v100x2-qwen3.8-27b) | SGLang (`sglang-V100` fork) | V100 32GB ×2 / CUDA 12.8 | Qwen3.8 27B (FP8) |

@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instance identity, derived from where this script is installed:
+# /opt/llm-serv/<instance>/run
+INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE="$(basename -- "${INSTANCE_DIR}")"
+
+# CUDA and virtualenv environment configuration
+export CUDA_HOME="/usr/local/cuda-13.2"
+export VIRTUAL_ENV="${INSTANCE_DIR}/.venv"
+export PATH="${CUDA_HOME}/bin:${VIRTUAL_ENV}/bin:${PATH}"
+export LD_LIBRARY_PATH="${VIRTUAL_ENV}/lib/python3.12/site-packages/PyNvVideoCodec:${VIRTUAL_ENV}/lib:${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+# Shared-memory transport is unusable between the ranks here
+export NCCL_SHM_DISABLE=1
+
+# FlashInfer is pinned to the build this fork ships
+export FLASHINFER_DISABLE_VERSION_CHECK=1
+
+# Load environment configuration file if present
+ENV_FILE="/etc/llm-serv/${INSTANCE}.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+fi
+
+# Per-instance JIT and kernel caches. The service account's $HOME is the
+# per-instance StateDirectory (/var/lib/llm-serv/<instance>), created by
+# systemd, so Triton, TileLang and FlashInfer kernels compiled here survive
+# restarts and are reused instead of recompiled. Clearing these forces a
+# clean compile.
+export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
+export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-${HOME}/.cache/flashinfer}"
+export TILELANG_CACHE_DIR="${TILELANG_CACHE_DIR:-${HOME}/.cache/tilelang}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${HOME}/.cache/triton}"
+
+# Ensure API key is configured. It reaches the server through the environment
+# (exported above), never as a command-line flag, so it stays out of ps output.
+if [[ -z "${VLLM_API_KEY:-}" ]]; then
+  echo "Error: VLLM_API_KEY is not set." >&2
+  exit 1
+fi
+
+# Server and model configuration
+VLLM_BIN="${VIRTUAL_ENV}/bin/vllm"
+MODEL_DIR="/opt/llm-serv/models"
+MODEL_PATH="deepseek-ai/DeepSeek-V4-Flash-Vision-Exp"
+MODEL_ALIAS="deepseek-v4-flash-vision-exp"
+
+# Tensor-parallel GPUs and degree. The degree defaults to the number of
+# visible devices, so a smaller L40S host needs only CUDA_VISIBLE_DEVICES.
+# Both overridable from the env file.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
+if [[ -n "${LLM_TENSOR_PARALLEL_SIZE:-}" ]]; then
+  TP_SIZE="${LLM_TENSOR_PARALLEL_SIZE}"
+else
+  IFS=, read -r -a TP_DEVICES <<< "${CUDA_VISIBLE_DEVICES}"
+  TP_SIZE="${#TP_DEVICES[@]}"
+fi
+
+# Listen address; both may be overridden from the env file
+HOST="${LLM_SERV_HOST:-0.0.0.0}"
+PORT="${LLM_SERV_PORT:-8000}"
+
+# Context, concurrency and memory profile: 32 x 512k tokens, 0.960 memory
+# utilization (≈15.4 GiB KV, keeps concurrency above 3x at 512k while
+# leaving ~0.8 GiB headroom for the vision path's JIT-at-inference
+# workspace spike), 4096 tokens per scheduled batch. All overridable from
+# the env file.
+MAX_MODEL_LEN="${LLM_MAX_MODEL_LEN:-524288}"
+MAX_NUM_SEQS="${LLM_MAX_NUM_SEQS:-32}"
+GPU_MEMORY_UTILIZATION="${LLM_GPU_MEMORY_UTILIZATION:-0.960}"
+MAX_NUM_BATCHED_TOKENS="${LLM_MAX_NUM_BATCHED_TOKENS:-4096}"
+
+# Default chat-template overrides, applied to requests that do not set their
+# own. The DeepSeek V4 template treats reasoning_effort as off (none),
+# maximum (max / xhigh), or the model default, and enable_thinking=false
+# turns thinking off. Both overridable from the env file.
+EXTRA_ARGS=()
+TEMPLATE_KWARGS=()
+if [[ -n "${LLM_REASONING_EFFORT:-}" ]]; then
+  case "${LLM_REASONING_EFFORT}" in
+    none|max|xhigh) ;;
+    *) echo "Error: LLM_REASONING_EFFORT must be one of none, max, xhigh (got: ${LLM_REASONING_EFFORT})." >&2; exit 1 ;;
+  esac
+  TEMPLATE_KWARGS+=("\"reasoning_effort\": \"${LLM_REASONING_EFFORT}\"")
+fi
+if [[ -n "${LLM_ENABLE_THINKING:-}" ]]; then
+  case "${LLM_ENABLE_THINKING}" in
+    true|false) ;;
+    *) echo "Error: LLM_ENABLE_THINKING must be true or false (got: ${LLM_ENABLE_THINKING})." >&2; exit 1 ;;
+  esac
+  TEMPLATE_KWARGS+=("\"enable_thinking\": ${LLM_ENABLE_THINKING}")
+fi
+if (( ${#TEMPLATE_KWARGS[@]} > 0 )); then
+  EXTRA_ARGS+=(--default-chat-template-kwargs "$(IFS=,; printf '{%s}' "${TEMPLATE_KWARGS[*]}")")
+fi
+
+# Speculative decoding: dspark, depth overridable from the env file. The
+# acceptance rate for this draft model falls off sharply past ~4-5 draft
+# positions; the vision profile validated on this host uses 3.
+SPEC_NUM_TOKENS="${LLM_NUM_SPECULATIVE_TOKENS:-3}"
+
+# Launch vLLM with ${TP_SIZE}-way tensor parallelism, DSA sparse attention,
+# expert parallelism over the MoE layers, an interleaved multimodal prompt
+# and dspark speculative decoding
+exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
+  --served-model-name "${MODEL_ALIAS}" \
+  --trust-remote-code \
+  --tokenizer-mode deepseek_v4 \
+  --tensor-parallel-size "${TP_SIZE}" \
+  --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
+  --max-model-len "${MAX_MODEL_LEN}" \
+  --max-num-seqs "${MAX_NUM_SEQS}" \
+  --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+  --kv-cache-dtype fp8_ds_mla \
+  --block-size 256 \
+  --attention-backend FLASHINFER_MLA_SPARSE_DSV4 \
+  --enable-expert-parallel \
+  --moe-backend auto \
+  --enable-prefix-caching \
+  --interleave-mm-strings \
+  --tool-call-parser deepseek_v4 \
+  --enable-auto-tool-choice \
+  --reasoning-parser deepseek_v4 \
+  --speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":${SPEC_NUM_TOKENS},\"draft_sample_method\":\"probabilistic\"}" \
+  "${EXTRA_ARGS[@]}" \
+  --host "${HOST}" \
+  --port "${PORT}"
