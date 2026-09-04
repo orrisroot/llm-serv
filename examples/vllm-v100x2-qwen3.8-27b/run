@@ -7,8 +7,8 @@ INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTANCE="$(basename -- "${INSTANCE_DIR}")"
 
 # CUDA and virtualenv environment configuration. 12.8 is the last toolkit
-# supporting Volta (sm_70); the 1Cat-vLLM wheel ships its own CUDA 12.8
-# runtime and PyTorch cu128 build, so only the toolkit path is exported.
+# supporting Volta (sm_70); the 1Cat-vLLM build targets PyTorch cu128, so
+# only the toolkit path is exported.
 export CUDA_HOME="/usr/local/cuda-12.8"
 export VIRTUAL_ENV="${INSTANCE_DIR}/.venv"
 export PATH="${CUDA_HOME}/bin:${VIRTUAL_ENV}/bin:${PATH}"
@@ -50,11 +50,12 @@ fi
 HOST="${LLM_SERV_HOST:-0.0.0.0}"
 PORT="${LLM_SERV_PORT:-8000}"
 
-# Context, concurrency and memory profile: 8 x 128k tokens, 0.95 memory
-# utilization. The 256k x 4-slot variant is documented in the README. All
-# overridable from the env file.
-MAX_MODEL_LEN="${LLM_MAX_MODEL_LEN:-131072}"
-MAX_NUM_SEQS="${LLM_MAX_NUM_SEQS:-8}"
+# Context, concurrency and memory profile: 16 x 256k tokens (the model's
+# maximum context), 0.95 memory utilization. All overridable from the env
+# file; drop LLM_MAX_NUM_SEQS (or LLM_MAX_MODEL_LEN) for a lower
+# concurrency / shorter-context profile.
+MAX_MODEL_LEN="${LLM_MAX_MODEL_LEN:-262144}"
+MAX_NUM_SEQS="${LLM_MAX_NUM_SEQS:-16}"
 GPU_MEMORY_UTILIZATION="${LLM_GPU_MEMORY_UTILIZATION:-0.95}"
 MAX_NUM_BATCHED_TOKENS=8192
 

@@ -1,6 +1,6 @@
 # 1Cat-vLLM / V100 32GB ×2 / Qwen3.8 27B FP8
 
-Serves Qwen3.8 27B through [1Cat-vLLM](https://github.com/1CatAI/1Cat-vLLM), a vLLM fork focused on SM70 / Tesla V100, using its `FLASH_ATTN_V100` attention backend (tensor parallelism defaults to 2, one rank per V100). Validated on this exact host.
+Serves Qwen3.8 27B through [1Cat-vLLM](https://github.com/1CatAI/1Cat-vLLM), a vLLM fork focused on SM70 / Tesla V100, using its `FLASH_ATTN_V100` attention backend (tensor parallelism defaults to 2, one rank per V100). The engine is compiled from the fork's source at the revision pinned below, so the procedure yields the same artifact whenever it is run.
 
 ## Target environment
 
@@ -8,25 +8,24 @@ Serves Qwen3.8 27B through [1Cat-vLLM](https://github.com/1CatAI/1Cat-vLLM), a v
 | --- | --- |
 | GPU | NVIDIA Tesla V100-PCIE-32GB ×2 |
 | CUDA | 12.8 (`/usr/local/cuda-12.8`) — the last toolkit supporting Volta |
-| Engine | 1Cat-vLLM 1.3.0 (prebuilt wheel), PyTorch 2.10.0+cu128 |
+| Engine | 1Cat-vLLM `main` @ `713b85c61` (`1.5.1.dev30+g713b85c61.cu128`, 2026-09-03), built from source, PyTorch 2.10.0+cu128 |
 | Python | 3.12 (standalone build with dev headers — see below) |
 | Model | `Qwen/Qwen3.8-27B-FP8` (28.8 GiB, includes MTP head) |
 | Listen address | `0.0.0.0:8000` (API key required) |
 
 ### Why FP8, not FP16
 
-The FP16 checkpoint (51.8 GiB) does not fit alongside a KV cache on two V100s: at `gpu-memory-utilization 0.95` the engine reports *"1.15 GiB KV cache is needed, which is larger than the available KV cache memory (0.12 GiB)"* even at a 32k context. The FP8 checkpoint halves the weights (28.8 GiB), leaving roughly 30 GiB for KV cache, and is the only viable path for this model on the host. Measured single-stream speed is on par with the FP16 path and with llama.cpp serving the Q8 GGUF (37.8 vs 38.7 tok/s).
+The FP16 checkpoint (51.8 GiB) fills the two 32 GB cards by itself, leaving no room for a usable KV cache. The FP8 checkpoint halves the weights (28.8 GiB), leaving roughly 30 GiB for KV cache; it is the only viable way to serve this model on two V100-32GB.
 
 ## Measured performance
 
-Native OpenAI endpoint, temperature 0, 256-token outputs, 8 concurrent × 192-token generations. First request is warmup (slow on V100, excluded).
+Native OpenAI endpoint, measured with the pinned build on the target hardware. Default profile: 256k context (the model's maximum), up to 16 concurrent sequences, MTP off, temperature 0. 192-token outputs, 8 concurrent generations, first request (warmup) excluded.
 
 | Profile | Single TG | Parallel aggregate |
 | --- | --- | --- |
-| 4 slots × 256k context | 37.8 tok/s | 128.6 tok/s (4-way) |
-| **8 slots × 128k context (this example)** | 37.8 tok/s | **242.3 tok/s (8-way)** |
+| 192-token generations, default profile | 37.8 tok/s | 245 tok/s (8-way) |
 
-Prompt processing is ~1300 tok/s for a 2.7k-token prompt. Raising concurrency from 4 to 8 slots costs no single-stream speed; the memory freed by FP8 is what makes it possible.
+Both GPUs saturate (~100% utilization) under the 8-way load, so the engine is compute-bound. Prompt processing is ~1400 tok/s (a 9k-token prompt prefills in ~6.4 s). At `gpu-memory-utilization 0.95` the server loads 30.4 GiB per GPU and leaves an 860,254-token FP8 KV cache.
 
 ## Prerequisites
 
@@ -40,9 +39,67 @@ sudo install -d -m 0755 -o root -g root /opt/llm-serv/vllm1cat
 
 `run` derives the venv and env file paths from its own install location, so any instance name works without editing the script.
 
+## Building the engine
+
+The wheel is compiled from the fork's source at a pinned revision as your normal user. Run the build from the root of the llm-serv checkout: the source lands in `1Cat-vLLM/`, which `.gitignore` keeps out of the repository, and the later steps return to the checkout root. The build bundles the SM70 Flash-V100 kernels and the fork's other CUDA work into the wheel.
+
+### Build tooling
+
+`uv` comes from [Provisioning the host](../../README.md#tooling). The rest is specific to this build, installed once per host:
+
+```sh
+# rust, for the optional vllm-rs frontend (rust-toolchain.toml pins the
+# 1.95 channel, which rustup installs on demand)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# perl core modules used by the vendored OpenSSL build inside vllm-rs
+# (RHEL-family perl is minimal — Debian/Ubuntu's perl is already complete)
+sudo dnf install -y perl-FindBin perl-IPC-Cmd perl-Time-Piece
+
+# protoc and its well-known type includes, for vllm_grpc.proto
+sudo dnf install -y protobuf-compiler protobuf-devel
+```
+
+### Build
+
+```sh
+git clone https://github.com/1CatAI/1Cat-vLLM.git
+cd 1Cat-vLLM
+git checkout 713b85c61124f89e427eadfdca86d3e30d0c3e52   # tip of main, 2026-09-03
+
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install --torch-backend=cu128 -r requirements/build/cuda.txt
+
+export CUDA_HOME=/usr/local/cuda-12.8
+export PATH="$CUDA_HOME/bin:$PATH"
+export TORCH_CUDA_ARCH_LIST=7.0
+export CMAKE_CUDA_ARCHITECTURES=70
+export VLLM_TARGET_DEVICE=cuda
+export MAX_JOBS=16 NVCC_THREADS=2
+
+python -m build --wheel --no-isolation
+ls dist/
+deactivate
+```
+
+| Variable | Rationale |
+| --- | --- |
+| `git checkout <sha>` | Pins the exact revision this setup was verified against, so the build is reproducible no matter when it runs; the tip of `main` moves |
+| `--torch-backend=cu128` | Resolves the `torch==2.10.0` pin to the CUDA 12.8 build (`2.10.0+cu128`) from the PyTorch index |
+| `TORCH_CUDA_ARCH_LIST="7.0"` / `CMAKE_CUDA_ARCHITECTURES=70` | SM70 only — the fork's recommended setting for V100 |
+| `CUDA_HOME` / `PATH` | Points the build at the CUDA 12.8 toolkit, matching the `cu128` torch ABI |
+| `VLLM_TARGET_DEVICE=cuda` | Explicit CUDA device target; auto-detected from torch otherwise |
+| `MAX_JOBS=16` / `NVCC_THREADS=2` | Caps build parallelism so the compile does not exhaust host memory |
+
+The build compiles the full vLLM CUDA sources plus the fork's `flash_attn_v100` and SM70 TurboMind kernels, and takes roughly 90 minutes on a 16-core host. The wheel lands as `dist/1cat_vllm-<version>-cp312-cp312-linux_x86_64.whl`; the version derives from the fork's git history (tag plus commit distance, `v1.5.0-30-g713b85c61` yields `1.5.1.dev30+g713b85c61.cu128`).
+
+The `vllm-rs` Rust frontend is built and bundled alongside the Python package — rustup pulls the pinned 1.95 channel, the perl modules satisfy the vendored OpenSSL build, and protoc compiles `vllm_grpc.proto`. It is optional either way: the Python frontend is the runtime default (`VLLM_USE_RUST_FRONTEND=0`), and if any of those tools is missing the build tolerates the rust failure and the wheel still works without `vllm-rs`.
+
 ## Runtime virtualenv
 
-The virtualenv is created at its final path — a venv bakes absolute paths into its scripts, so it cannot be built elsewhere and moved. Its interpreter has to sit somewhere `llm-serv` can reach, so install that under `/opt/llm-serv` as well. Use the standalone Python build: the system interpreter on this host lacks `Python.h`, and Triton compiles a small launcher at runtime, so a header-less interpreter fails during model inspection.
+The virtualenv is created at its final path — a venv bakes absolute paths into its scripts, so it cannot be built elsewhere and moved. Its interpreter has to sit somewhere `llm-serv` can reach, so install that under `/opt/llm-serv` as well. Use the standalone Python build: distro interpreters commonly lack dev headers (`Python.h`), and Triton compiles a small launcher at runtime, so a header-less interpreter fails during model inspection.
 
 ```sh
 sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
@@ -51,28 +108,30 @@ sudo env "PATH=$PATH" UV_PYTHON_INSTALL_DIR=/opt/llm-serv/python \
   uv venv --python 3.12 --seed /opt/llm-serv/vllm1cat/.venv
 ```
 
-Install the release wheel. Download it from the [latest release](https://github.com/1CatAI/1Cat-vLLM/releases/latest):
+Install the runtime dependencies, then the wheel just built. The fork's `requirements/cuda.txt` pins `nvidia-cutlass-dsl[cu13]`, whose `cu13` extra does not exist for the CUDA 12.8 build — drop the extra the same way the fork's own CI does:
 
 ```sh
-curl -sL -o /tmp/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl \
-  https://github.com/1CatAI/1Cat-vLLM/releases/download/v1.3.0/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl
+mkdir -p /tmp/1cat-reqs
+cp requirements/common.txt requirements/cuda.txt /tmp/1cat-reqs/
+sed -i 's/nvidia-cutlass-dsl\[cu13\]/nvidia-cutlass-dsl/' /tmp/1cat-reqs/cuda.txt
 
 sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm1cat/.venv uv pip install \
-  --no-cache-dir --index-strategy unsafe-best-match \
+  --torch-backend=cu128 --index-strategy unsafe-best-match \
   --extra-index-url https://download.pytorch.org/whl/cu128 \
-  /tmp/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl
+  -r /tmp/1cat-reqs/common.txt -r /tmp/1cat-reqs/cuda.txt
 
-rm -f /tmp/1cat_vllm-1.3.0-cp312-cp312-linux_x86_64.whl
+sudo env "PATH=$PATH" VIRTUAL_ENV=/opt/llm-serv/vllm1cat/.venv uv pip install \
+  --no-deps dist/1cat_vllm-*.whl
+
+rm -rf /tmp/1cat-reqs
+cd ..   # back to the llm-serv checkout root
 ```
 
-`--index-strategy unsafe-best-match` is required. By default uv takes a package from the first index that carries it at all; the CUDA index carries `flashinfer-python`, but not the `0.6.11.post2` this wheel pins, so the resolve fails outright without ever consulting PyPI. The flag makes uv consider every index, which is what `--extra-index-url` already means to pip.
+`--index-strategy unsafe-best-match` is required. By default uv takes a package from the first index that carries it at all; the CUDA index carries `flashinfer-python`, but not the `0.6.11.post2` this build pins, so the resolve fails outright without ever consulting PyPI. The flag makes uv consider every index, which is what `--extra-index-url` already means to pip.
 
-The wheel bundles `flash_attn_v100` and the SM70 CUDA extensions; no source build or lmdeploy tree is required.
-
-Verify the environment before starting:
+Verify the environment before starting. The shell must be outside the `1Cat-vLLM/` source tree — Python would otherwise import the source instead of the wheel's CUDA extensions:
 
 ```sh
-cd /tmp   # outside any 1Cat-vLLM source checkout
 sudo -u llm-serv /opt/llm-serv/vllm1cat/.venv/bin/python - <<'PY'
 import torch, vllm, flash_attn_v100
 print("vllm", vllm.__version__, "| torch", torch.__version__, "| gpus", torch.cuda.device_count())
@@ -83,9 +142,11 @@ PY
 
 ### Scripts
 
-Install this directory's contents into place:
+Install this example's files into place:
 
 ```sh
+cd examples/vllm-v100x2-qwen3.8-27b
+
 sudo install -o root -g llm-serv -m 0750 run         /opt/llm-serv/vllm1cat/run
 sudo install -o root -g llm-serv -m 0640 env.example /etc/llm-serv/vllm1cat.env
 sudoedit /etc/llm-serv/vllm1cat.env   # replace the placeholder with the real key
@@ -113,26 +174,25 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | Flag | Value | Rationale |
 | --- | --- | --- |
 | `--tensor-parallel-size <n>` | 2 | One rank per GPU, derived from the number of visible devices. On a 4-GPU host, set `CUDA_VISIBLE_DEVICES` to four devices (or set `LLM_TENSOR_PARALLEL_SIZE`) |
-| `--gpu-memory-utilization <f>` | 0.95 | ~30.2 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
-| `--max-model-len 131072` / `--max-num-seqs 8` | — | 8 slots × 128k. The parallelism profile: 242 tok/s aggregate at zero single-stream cost. The 4-slot × 256k profile (`LLM_MAX_MODEL_LEN=262144 LLM_MAX_NUM_SEQS=4`) serves long context at 128.6 tok/s |
+| `--gpu-memory-utilization <f>` | 0.95 | 30.4 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
+| `--max-model-len 262144` / `--max-num-seqs 16` | — | The model's maximum context (262,144, per `config.json`), up to 16 concurrent sequences against the 860k-token FP8 KV cache. `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` override either; lowering the context is the cheapest way to free KV memory |
 | `--max-num-batched-tokens 8192` | 8192 | Prefill batch budget from the fork's public profiles |
-| `--kv-cache-dtype fp8_e5m2` | fp8_e5m2 | Halves KV memory (830k-token cache vs 429k at FP16); the FP8 V100 KV path this fork ships |
+| `--kv-cache-dtype fp8_e5m2` | fp8_e5m2 | Halves KV memory (860k-token cache vs 429k at FP16); the FP8 V100 KV path this fork ships |
 | `--attention-backend FLASH_ATTN_V100` | — | 1Cat-vLLM's SM70 attention path (decode + prefill) — the reason this fork exists |
-| `--tool-call-parser qwen3_coder` / `--enable-auto-tool-choice` | — | OpenAI-compatible tool calling, validated with this model family |
+| `--tool-call-parser qwen3_coder` / `--enable-auto-tool-choice` | — | OpenAI-compatible tool calling |
 | `--reasoning-parser qwen3` | — | Keeps the reasoning (thinking) content in responses (in the `reasoning` field), like llama.cpp's `--reasoning-preserve` |
 | `LLM_REASONING_EFFORT` (env) | unset | Default thinking effort applied to requests that do not set one. Valid: `low`, `medium`, `xhigh` (the Qwen3.8 template's default is `xhigh`); wired through `--default-chat-template-kwargs`. A per-request `reasoning_effort` still overrides it |
 | `LLM_ENABLE_THINKING` (env) | unset | Turns thinking off entirely when set to `false` (`enable_thinking=false`), skipping the reasoning path. The model default is on |
 | `--served-model-name qwen3.8-27b` | — | Model name exposed by the API, decoupling clients from the on-disk layout |
 
-MTP speculative decoding is an opt-in in this example, matching the fork's V100 public profile: set `VLLM_1CAT_ENABLE_SM70_MTP_DEFAULTS=1` (validated on this host) or pass an explicit `--speculative-config`. Measured trade-off on this host (fp8_e5m2 KV, TP2):
+MTP speculative decoding is opt-in, matching the fork's V100 profile: set `VLLM_1CAT_ENABLE_SM70_MTP_DEFAULTS=1` or pass an explicit `--speculative-config`. Measured trade-off on the target hardware (same default profile, fp8_e5m2 KV, TP2, temperature 0):
 
 | Workload | MTP off | MTP4 (opt-in) |
 | --- | --- | --- |
-| Single-stream, short context | 37.8 tok/s | 48.4 tok/s (+30%) |
-| 8 concurrent × 192 tokens | 242 tok/s | 159 tok/s (-35%) |
-| 64k-context decode | 1.9 tok/s | 1.6 tok/s |
+| Single-stream, short context | 37.8 tok/s | 42.5 tok/s |
+| 8 concurrent × 192 tokens | 245 tok/s | 142–198 tok/s |
 
-Enable MTP for low-concurrency, latency-sensitive serving; keep it off for high-concurrency or long-context workloads.
+MTP raises single-stream decode by roughly 12%, but costs 20–40% of the aggregate throughput at 8-way and shrinks the KV cache (739k tokens vs 860k) to fund the draft model and its capture graphs — keep it off for this profile.
 
 Image inputs are enabled by default on the `FLASH_ATTN_V100` path (one image per prompt); pass `--limit-mm-per-prompt '{"image":0,"video":0}'` for text-only serving.
 

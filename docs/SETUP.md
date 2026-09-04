@@ -14,7 +14,7 @@ Commands that change the system are shown with `sudo`; everything else runs as y
 | NVIDIA driver, GPUs visible | `nvidia-smi` |
 | git | `git --version` |
 
-The llama.cpp and the L40S vLLM examples build their engine from source, so they need the CUDA toolkit and compilers on the host itself — or on a machine with the same CUDA version, from which only the build output is copied over. The 1Cat-vLLM example installs a prebuilt wheel and needs neither. Which version, and which extra tools, depends on the example; see the table in [step 4](#4-pick-an-example).
+Every example builds its engine from source — llama.cpp and the two vLLM examples compile native code, and SGLang builds a runtime — so they need the CUDA toolkit and compilers on the host itself, or on a machine with the same CUDA version, from which only the build output is copied over. Which version, and which extra tools, depends on the example; see the table in [step 4](#4-pick-an-example).
 
 `uv` is not assumed to be present. Install it for your own account — every example uses it to fetch models, and some to build the engine:
 
@@ -83,7 +83,7 @@ Everything from here depends on which example you deploy.
 | --- | --- | --- | --- | --- | --- |
 | Hardware | V100 32GB ×2 / ×3 (sm_70) | V100 32GB ×2 (sm_70) | V100 32GB ×2 (sm_70) | L40S ×8 (sm_89) | L40S ×8 (sm_89) |
 | CUDA | 12.8 | 12.8 | 12.8 | 13.2 | 13.2 |
-| Extra build tools | cmake, gcc | uv + prebuilt wheel | rust, protoc, uv | rust, gh, Python 3.12 | rust, gh, patch, Python 3.12 |
+| Extra build tools | cmake, gcc | uv, gcc, rust, protoc, perl | rust, protoc, uv | rust, gh, Python 3.12 | rust, gh, patch, Python 3.12 |
 | Engine artifact | one static binary in `bin/` | a virtualenv in `.venv/` | a virtualenv in `.venv/` built from source | a virtualenv in `.venv/` | a virtualenv in `.venv/` |
 | Model | `unsloth/Qwen3.8-27B-GGUF` | `Qwen/Qwen3.8-27B-FP8` | `Qwen/Qwen3.8-27B-FP8` | `deepseek-ai/DeepSeek-V4-Flash-0731` | `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` |
 | API key variable | `LLAMA_API_KEY` | `VLLM_API_KEY` | `SGLANG_API_KEY` | `VLLM_API_KEY` | `VLLM_API_KEY` |
@@ -103,7 +103,7 @@ An example may call for a subdirectory as well — `bin/` for llama.cpp — whic
 The engines differ enough that each procedure lives with its example:
 
 - [llama.cpp — Building the engine](../examples/llama-v100-qwen3.8-27b/README.md#building-the-engine)
-- [vLLM — Runtime virtualenv](../examples/vllm-v100x2-qwen3.8-27b/README.md#runtime-virtualenv)
+- [vLLM — Building the engine](../examples/vllm-v100x2-qwen3.8-27b/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-v100x2-qwen3.8-27b/README.md#runtime-virtualenv)
 - [SGLang — Building the engine](../examples/sglang-v100x2-qwen3.8-27b/README.md#building-the-engine)
 - [vLLM ×8 (0731) — Building the engine](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#building-the-engine) and [Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-0731/README.md#runtime-virtualenv)
 - [vLLM ×8 Vision — Runtime virtualenv](../examples/vllm-l40sx8-deepseek-v4-flash-vision-exp/README.md#runtime-virtualenv)
