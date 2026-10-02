@@ -6,17 +6,11 @@ set -euo pipefail
 INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTANCE="$(basename -- "${INSTANCE_DIR}")"
 
-# CUDA and virtualenv environment configuration. Ampere (sm_86) is supported
-# by the full CUDA 13 stack, so point CUDA_HOME at the standard toolkit
-# symlink (override else in the env file if the host keeps several versions).
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 export VIRTUAL_ENV="${INSTANCE_DIR}/.venv"
 export PATH="${CUDA_HOME}/bin:${VIRTUAL_ENV}/bin:${PATH}"
 
-# NCCL transport pinned for FULL_AND_PIECEWISE CUDA graphs. Graph replay must
-# re-issue the exact captured collective, and NCCL's size-adaptive algorithm
-# switching is what makes FULL capture crash on Ampere (vllm-backport docs).
-# Overridable from the env file.
+# Pin NCCL transport for FULL_AND_PIECEWISE CUDA-graph replay (Ampere, fork docs)
 export NCCL_ALGO="${NCCL_ALGO:-Ring}"
 export NCCL_PROTO="${NCCL_PROTO:-Simple}"
 
@@ -29,8 +23,7 @@ if [[ -f "${ENV_FILE}" ]]; then
   set +a
 fi
 
-# Ensure API key is configured. It reaches the server through the environment
-# (exported above), never as a command-line flag, so it stays out of ps output.
+# Ensure API key is configured (stays out of ps output)
 if [[ -z "${VLLM_API_KEY:-}" ]]; then
   echo "Error: VLLM_API_KEY is not set." >&2
   exit 1
@@ -42,8 +35,7 @@ MODEL_DIR="/opt/llm-serv/models"
 MODEL_PATH="nicosuter/Qwen3.8-27B-AWQ"
 MODEL_ALIAS="qwen3.8-27b-awq"
 
-# Tensor-parallel GPUs and degree. The degree defaults to the number of
-# visible devices. Both overridable from the env file.
+# Tensor-parallel GPUs; degree derived from the device count
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 if [[ -n "${LLM_TENSOR_PARALLEL_SIZE:-}" ]]; then
   TP_SIZE="${LLM_TENSOR_PARALLEL_SIZE}"
@@ -52,11 +44,7 @@ else
   TP_SIZE="${#TP_DEVICES[@]}"
 fi
 
-# Linear backend. nicosuter AWQ is a compressed-tensors W4A16 quant with
-# INT8 (GatedDeltaNet input projections preserved at 8-bit); on Ampere its
-# 4-bit layers run as W4A16 GEMMs and Marlin is the fast, verified kernel.
-# Blackwell might prefer auto; the capability gate keeps the script correct
-# on both, and LLM_LINEAR_BACKEND overrides either way.
+# Linear backend: W4A16 Marlin on Ampere (capability < 10), auto on Blackwell
 LINEAR_BACKEND=""
 CC_MAJOR="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | awk -F. 'NR==1{print $1}')"
 if [[ -n "${CC_MAJOR}" ]] && (( CC_MAJOR >= 10 )); then
@@ -69,12 +57,7 @@ fi
 HOST="${LLM_SERV_HOST:-0.0.0.0}"
 PORT="${LLM_SERV_PORT:-8000}"
 
-# CUDA-graph mode. vllm-backport's FULL_AND_PIECEWISE captures the whole
-# decode step (attention + GEMMs + NCCL all-reduce) into one CUDA graph —
-# the fork's Ampere gain. Requires the NCCL pin and bounded capture sizes
-# (FULL graphs keep private memory pools; too many sizes OOM warmup).
-# cudagraph_capture_sizes derives from the actual --max-num-seqs; override
-# via LLM_CUDAGRAPH_CAPTURE_SIZES (JSON list).
+# Concurrency, CUDA-graph capture sizes, context, memory
 MAX_NUM_SEQS="${LLM_MAX_NUM_SEQS:-32}"
 CUDAGRAPH_MODE="${LLM_CUDAGRAPH_MODE:-FULL_AND_PIECEWISE}"
 if [[ -n "${LLM_CUDAGRAPH_CAPTURE_SIZES:-}" ]]; then
@@ -84,20 +67,12 @@ else
   for ((i = 1; i <= MAX_NUM_SEQS; i++)); do CAPTURE_SIZES+=("${i}"); done
   CUDAGRAPH_CAPTURE_SIZES="[$(IFS=,; printf '%s' "${CAPTURE_SIZES[*]}")]"
 fi
-
-# Context, concurrency and memory profile. nicosuter AWQ is ~12 GiB/GPU at
-# TP2, leaving roughly 10 GiB/GPU for the FP8 KV cache at 0.95 utilization —
-# enough for ~2 concurrent 256K-token requests (measured KV pool 673k tokens).
-# Defaults: the model's maximum context. All overridable from the env file.
 MAX_MODEL_LEN="${LLM_MAX_MODEL_LEN:-262144}"
-GPU_MEMORY_UTILIZATION="${LLM_GPU_MEMORY_UTILIZATION:-0.95}"
+GPU_MEMORY_UTILIZATION="${LLM_GPU_MEMORY_UTILIZATION:-0.93}"
 MAX_NUM_BATCHED_TOKENS="${LLM_MAX_NUM_BATCHED_TOKENS:-8192}"
 KV_CACHE_DTYPE="${LLM_KV_CACHE_DTYPE:-fp8}"
 
-# Default chat-template overrides, applied to requests that do not set their
-# own. The Qwen3.8 template accepts reasoning_effort of low, medium, xhigh
-# (model default xhigh), and enable_thinking=false turns thinking off. Both
-# overridable from the env file.
+# Default chat-template overrides
 EXTRA_ARGS=()
 TEMPLATE_KWARGS=()
 if [[ -n "${LLM_REASONING_EFFORT:-}" ]]; then
@@ -118,20 +93,11 @@ if (( ${#TEMPLATE_KWARGS[@]} > 0 )); then
   EXTRA_ARGS+=(--default-chat-template-kwargs "$(IFS=,; printf '{%s}' "${TEMPLATE_KWARGS[*]}")")
 fi
 
-# MTP speculative decoding, opt-in. Measured on this hardware class: MTP3/4
-# accelerates NVFP4 targets (thinking-on single stream +20-31%) but hurts
-# AWQ/GPTQ W4A16 targets (see README comparison), so this run ships MTP off
-# by default. Set LLM_MTP_TOKENS to enable `--speculative-config
-# {"method":"mtp", ...}` with N draft tokens.
+# MTP speculative decoding; off by default (see README)
 if [[ -n "${LLM_MTP_TOKENS:-}" ]]; then
   EXTRA_ARGS+=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":${LLM_MTP_TOKENS}}")
 fi
 
-# Launch vllm-backport with ${TP_SIZE}-way tensor parallelism over the AWQ
-# checkpoint. --disable-custom-all-reduce pairs with the NCCL pin above for
-# graph-capturable collectives (the fork's documented Ampere requirement).
-# The working directory must stay outside any source checkout, or Python
-# imports the source tree instead of the wheel's CUDA extensions.
 exec "${VLLM_BIN}" serve "${MODEL_DIR}/${MODEL_PATH}" \
   --served-model-name "${MODEL_ALIAS}" \
   --trust-remote-code \

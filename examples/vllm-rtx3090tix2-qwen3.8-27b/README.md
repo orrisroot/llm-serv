@@ -156,7 +156,7 @@ sudo tail -f /var/log/llm-serv/vllmawq-stderr.log
 | `NCCL_ALGO=Ring` / `NCCL_PROTO=Simple` | env | Pin the collective so FULL-graph replay is exact — the fork's documented fix for "crash on Ampere" graph capture |
 | `--disable-custom-all-reduce` | — | Pairs with the NCCL pin for graph-capturable collectives |
 | `--max-model-len 262144` / `--max-num-seqs 32` | 256k / 32 | Maximum context; the 32-slot ceiling is cheap but real concurrency is KV-bound (~2 for full-context requests) |
-| `--gpu-memory-utilization 0.95` | 0.95 | ~22.4 GiB/GPU addressable; ~12 GiB weights, ~10 GiB left for FP8 KV + activations. Up to 0.98 starts on the target host (0.99 fails at startup); 0.90 is the conservative fallback if graph warmup OOMs |
+| `--gpu-memory-utilization 0.93` | 0.93 | ~21.9 GiB/GPU addressable; ~12 GiB weights, ~8 GiB left for FP8 KV + activation headroom (measured KV pool 643k tokens = 2.45x at 256K); the stable setting on this host |
 | `--tool-call-parser qwen3_coder` / `--enable-auto-tool-choice` | — | OpenAI-compatible tool calling |
 | `--reasoning-parser qwen3` | — | Keeps thinking content in the `reasoning` field |
 | `LLM_REASONING_EFFORT` / `LLM_ENABLE_THINKING` (env) | unset | Default template kwargs for requests that do not set their own |
@@ -181,7 +181,7 @@ vllm-backport bundles a paired [LMCache fork](https://github.com/wtdcode/LMCache
 | `LLM_CUDAGRAPH_CAPTURE_SIZES` | `[1..max-num-seqs]` | JSON list of batch sizes to capture; FULL graphs hold private pools, so cap it |
 | `NCCL_ALGO` / `NCCL_PROTO` | `Ring` / `Simple` | Pinned collective for graph replay |
 | `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` | `262144` / `32` | Context per request and concurrency ceiling |
-| `LLM_GPU_MEMORY_UTILIZATION` | `0.95` | GPU memory ceiling; verified to start up to 0.98 on the target host, 0.99 fails; drop to 0.90 if graph warmup OOMs |
+| `LLM_GPU_MEMORY_UTILIZATION` | `0.93` | GPU memory ceiling; the stable setting on this host |
 | `LLM_KV_CACHE_DTYPE` | `fp8` | KV cache precision; `bf16` doubles KV memory |
 | `LLM_MTP_TOKENS` | unset | Enables `--speculative-config {"method":"mtp",...}`; negative for this model — keep unset |
 | `LLM_REASONING_EFFORT` / `LLM_ENABLE_THINKING` | unset | Default chat-template kwargs |
