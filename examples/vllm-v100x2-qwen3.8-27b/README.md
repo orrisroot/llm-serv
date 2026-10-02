@@ -8,8 +8,8 @@ Serves Qwen3.8 27B through [1Cat-vLLM](https://github.com/1CatAI/1Cat-vLLM), a v
 | --- | --- |
 | GPU | NVIDIA Tesla V100-PCIE-32GB ×2 |
 | CUDA | 12.8 (`/usr/local/cuda-12.8`) — the last toolkit supporting Volta |
-| Engine | 1Cat-vLLM `main` @ `713b85c61` (`1.5.1.dev30+g713b85c61.cu128`, 2026-09-03), built from source, PyTorch 2.10.0+cu128 |
-| Python | 3.12 (standalone build with dev headers — see below) |
+| Engine | 1Cat-vLLM `main` @ `d30469863287471a7082842500ae73299a697e0d` (`1.5.1.dev925+gd30469863.cu128`), built from source, PyTorch 2.10.0+cu128 |
+| Python | 3.12.15 (uv-managed standalone build with dev headers — see below) |
 | Model | `Qwen/Qwen3.8-27B-FP8` (28.8 GiB, includes MTP head) |
 | Listen address | `0.0.0.0:8000` (API key required) |
 
@@ -19,13 +19,18 @@ The FP16 checkpoint (51.8 GiB) fills the two 32 GB cards by itself, leaving no r
 
 ## Measured performance
 
-Native OpenAI endpoint, measured with the pinned build on the target hardware. Default profile: 256k context (the model's maximum), up to 16 concurrent sequences, MTP off, temperature 0. 192-token outputs, 8 concurrent generations, first request (warmup) excluded.
+Native OpenAI endpoint, measured with the pinned build on the target hardware using `bench_llm.py` in this directory. Default profile: 256k context (the model's maximum), up to 16 concurrent sequences, MTP off, temperature 0, 192-token outputs (`min_tokens`, first request after boot excluded). A per-run nonce at the start of the prompt defeats the fork's default prefix cache, so "cold" runs prefill from scratch; reusing a nonce measures the prefix-cache hit path.
 
-| Profile | Single TG | Parallel aggregate |
-| --- | --- | --- |
-| 192-token generations, default profile | 37.8 tok/s | 245 tok/s (8-way) |
+| Profile | Throughput |
+| --- | --- |
+| Prefill, cold 9k-token prompt | ~1,440 tok/s (TTFT ≈6.3 s) |
+| Prefill, prefix-cache hit | ~9,250 tok/s (TTFT ≈1.0 s) |
+| Single-stream decode | 39.0 tok/s |
+| Decode aggregate, 4-way | 99.7 tok/s |
+| Decode aggregate, 8-way | 143.2 tok/s |
+| Decode aggregate, 16-way | 182 tok/s |
 
-Both GPUs saturate (~100% utilization) under the 8-way load, so the engine is compute-bound. Prompt processing is ~1400 tok/s (a 9k-token prompt prefills in ~6.4 s). At `gpu-memory-utilization 0.95` the server loads 30.4 GiB per GPU and leaves an 860,254-token FP8 KV cache.
+Decode aggregate excludes prefill (from the earliest first token). Prompt processing is compute-bound on both GPUs; at `gpu-memory-utilization 0.95` the server uses ≈29.3 GiB per GPU after load.
 
 ## Prerequisites
 
@@ -66,7 +71,7 @@ sudo dnf install -y protobuf-compiler protobuf-devel
 ```sh
 git clone https://github.com/1CatAI/1Cat-vLLM.git
 cd 1Cat-vLLM
-git checkout 713b85c61124f89e427eadfdca86d3e30d0c3e52   # tip of main, 2026-09-03
+git checkout d30469863287471a7082842500ae73299a697e0d   # tip of main, 2026-09-29
 
 uv venv --python 3.12
 source .venv/bin/activate
@@ -93,7 +98,7 @@ deactivate
 | `VLLM_TARGET_DEVICE=cuda` | Explicit CUDA device target; auto-detected from torch otherwise |
 | `MAX_JOBS=16` / `NVCC_THREADS=2` | Caps build parallelism so the compile does not exhaust host memory |
 
-The build compiles the full vLLM CUDA sources plus the fork's `flash_attn_v100` and SM70 TurboMind kernels, and takes roughly 90 minutes on a 16-core host. The wheel lands as `dist/1cat_vllm-<version>-cp312-cp312-linux_x86_64.whl`; the version derives from the fork's git history (tag plus commit distance, `v1.5.0-30-g713b85c61` yields `1.5.1.dev30+g713b85c61.cu128`).
+The build compiles the full vLLM CUDA sources plus the fork's `flash_attn_v100` and SM70 TurboMind kernels, and takes roughly 90 minutes to a couple of hours on a 16-core host. The wheel lands as `dist/1cat_vllm-<version>-cp312-cp312-linux_x86_64.whl`; the version derives from the fork's git history (tag plus commit distance, `v1.5.0-925-gd30469863` yields `1.5.1.dev925+gd30469863.cu128`).
 
 The `vllm-rs` Rust frontend is built and bundled alongside the Python package — rustup pulls the pinned 1.95 channel, the perl modules satisfy the vendored OpenSSL build, and protoc compiles `vllm_grpc.proto`. It is optional either way: the Python frontend is the runtime default (`VLLM_USE_RUST_FRONTEND=0`), and if any of those tools is missing the build tolerates the rust failure and the wheel still works without `vllm-rs`.
 
@@ -174,10 +179,10 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | Flag | Value | Rationale |
 | --- | --- | --- |
 | `--tensor-parallel-size <n>` | 2 | One rank per GPU, derived from the number of visible devices. On a 4-GPU host, set `CUDA_VISIBLE_DEVICES` to four devices (or set `LLM_TENSOR_PARALLEL_SIZE`) |
-| `--gpu-memory-utilization <f>` | 0.95 | 30.4 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
-| `--max-model-len 262144` / `--max-num-seqs 16` | — | The model's maximum context (262,144, per `config.json`), up to 16 concurrent sequences against the 860k-token FP8 KV cache. `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` override either; lowering the context is the cheapest way to free KV memory |
+| `--gpu-memory-utilization <f>` | 0.95 | ≈29.3 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
+| `--max-model-len 262144` / `--max-num-seqs 16` | — | The model's maximum context (262,144, per `config.json`), up to 16 concurrent sequences. The engine auto-sizes the attention block to align with the mamba page size (1568 tokens on this build). `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` override either; lowering the context is the cheapest way to free KV memory |
 | `--max-num-batched-tokens 8192` | 8192 | Prefill batch budget from the fork's public profiles |
-| `--kv-cache-dtype fp8_e5m2` | fp8_e5m2 | Halves KV memory (860k-token cache vs 429k at FP16); the FP8 V100 KV path this fork ships |
+| `--kv-cache-dtype fp8_e5m2` | fp8_e5m2 | Halves KV memory vs FP16; the fork's E5M2 V100 KV path also enables the bounded short-context decode CUDA graph (8192 tokens) |
 | `--attention-backend FLASH_ATTN_V100` | — | 1Cat-vLLM's SM70 attention path (decode + prefill) — the reason this fork exists |
 | `--tool-call-parser qwen3_coder` / `--enable-auto-tool-choice` | — | OpenAI-compatible tool calling |
 | `--reasoning-parser qwen3` | — | Keeps the reasoning (thinking) content in responses (in the `reasoning` field), like llama.cpp's `--reasoning-preserve` |
@@ -185,14 +190,16 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | `LLM_ENABLE_THINKING` (env) | unset | Turns thinking off entirely when set to `false` (`enable_thinking=false`), skipping the reasoning path. The model default is on |
 | `--served-model-name qwen3.8-27b` | — | Model name exposed by the API, decoupling clients from the on-disk layout |
 
-MTP speculative decoding is opt-in, matching the fork's V100 profile: set `VLLM_1CAT_ENABLE_SM70_MTP_DEFAULTS=1` or pass an explicit `--speculative-config`. Measured trade-off on the target hardware (same default profile, fp8_e5m2 KV, TP2, temperature 0):
+Some defaults are applied automatically by the fork at startup and need no flags:
 
-| Workload | MTP off | MTP4 (opt-in) |
+| Auto setting | Value | Rationale |
 | --- | --- | --- |
-| Single-stream, short context | 37.8 tok/s | 42.5 tok/s |
-| 8 concurrent × 192 tokens | 245 tok/s | 142–198 tok/s |
+| `enable_prefix_caching` / `mamba_cache_mode=align` | on / align | SM70 serving default for hybrid (linear-attention) models; prefix cache reuse requires the mamba cache to align with the attention pages |
+| `VLLM_SM70_RMSNORM_GATED_EXACT` | 1 | Fork default for the no-MTP profile (`config/vllm.py`): native FP32 gated-RMSNorm arithmetic. Set `VLLM_SM70_RMSNORM_GATED_EXACT=0` in the env file for the fused FP16 path |
+| `VLLM_SM70_FP8_KV_DECODE_CONTEXT_BUCKETS` | 8192 | Bounds the FP8-KV short-context decode graph so the short D256 GQA graph stays scalar-only |
+| compile-graph policy | `VLLM_COMPILE`, cudagraph `FULL_AND_PIECEWISE`, capture `(1,2,4,8,16)` | The fork's SM70 compile-graph policy for this profile |
 
-MTP raises single-stream decode by roughly 12%, but costs 20–40% of the aggregate throughput at 8-way and shrinks the KV cache (739k tokens vs 860k) to fund the draft model and its capture graphs — keep it off for this profile.
+MTP speculative decoding is opt-in and not part of this profile: set `VLLM_1CAT_ENABLE_SM70_MTP_DEFAULTS=1` or pass an explicit `--speculative-config`.
 
 Image inputs are enabled by default on the `FLASH_ATTN_V100` path (one image per prompt); pass `--limit-mm-per-prompt '{"image":0,"video":0}'` for text-only serving.
 
