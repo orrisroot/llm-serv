@@ -19,18 +19,19 @@ The FP16 checkpoint (51.8 GiB) fills the two 32 GB cards by itself, leaving no r
 
 ## Measured performance
 
-Native OpenAI endpoint, measured with the pinned build on the target hardware using `bench_llm.py` in this directory. Default profile: 256k context (the model's maximum), up to 16 concurrent sequences, MTP off, temperature 0, 192-token outputs (`min_tokens`, first request after boot excluded). A per-run nonce at the start of the prompt defeats the fork's default prefix cache, so "cold" runs prefill from scratch; reusing a nonce measures the prefix-cache hit path.
+Native OpenAI endpoint, measured with the pinned build on the target hardware using `bench_llm.py` in this directory. Default profile: 256k context (the model's maximum), up to 32 concurrent sequences, MTP off, temperature 0, 192-token outputs (`min_tokens`, first request after boot excluded). A per-run nonce at the start of the prompt defeats the fork's default prefix cache, so "cold" runs prefill from scratch; reusing a nonce measures the prefix-cache hit path.
 
 | Profile | Throughput |
 | --- | --- |
-| Prefill, cold 9k-token prompt | ~1,440 tok/s (TTFT ≈6.3 s) |
-| Prefill, prefix-cache hit | ~9,250 tok/s (TTFT ≈1.0 s) |
-| Single-stream decode | 39.0 tok/s |
-| Decode aggregate, 4-way | 99.7 tok/s |
-| Decode aggregate, 8-way | 143.2 tok/s |
-| Decode aggregate, 16-way | 182 tok/s |
+| Prefill, cold 9k-token prompt | ~1,770 tok/s (TTFT ≈5.1 s) |
+| Prefill, prefix-cache hit | ~12,300 tok/s (TTFT ≈0.73 s) |
+| Single-stream decode | 38.8 tok/s |
+| Decode aggregate, 4-way | 100 tok/s |
+| Decode aggregate, 8-way | 148 tok/s |
+| Decode aggregate, 16-way | 181 tok/s |
+| Decode aggregate, 32-way | 207 tok/s |
 
-Decode aggregate excludes prefill (from the earliest first token). Prompt processing is compute-bound on both GPUs; at `gpu-memory-utilization 0.95` the server uses ≈29.3 GiB per GPU after load.
+Decode aggregate excludes prefill (from the earliest first token). At `gpu-memory-utilization 0.95` the server uses ≈30 GiB per GPU after load.
 
 ## Prerequisites
 
@@ -179,9 +180,10 @@ Model loading takes a few minutes; follow it with `sudo tail -f /var/log/llm-ser
 | Flag | Value | Rationale |
 | --- | --- | --- |
 | `--tensor-parallel-size <n>` | 2 | One rank per GPU, derived from the number of visible devices. On a 4-GPU host, set `CUDA_VISIBLE_DEVICES` to four devices (or set `LLM_TENSOR_PARALLEL_SIZE`) |
-| `--gpu-memory-utilization <f>` | 0.95 | ≈29.3 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
-| `--max-model-len 262144` / `--max-num-seqs 16` | — | The model's maximum context (262,144, per `config.json`), up to 16 concurrent sequences. The engine auto-sizes the attention block to align with the mamba page size (1568 tokens on this build). `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` override either; lowering the context is the cheapest way to free KV memory |
+| `--gpu-memory-utilization <f>` | 0.95 | ≈30 GiB used per GPU after load; the FP8 weights leave just enough KV headroom. Set `LLM_GPU_MEMORY_UTILIZATION` to override |
+| `--max-model-len 262144` / `--max-num-seqs 32` | — | The model's maximum context (262,144, per `config.json`), up to 32 concurrent sequences. `LLM_MAX_MODEL_LEN` / `LLM_MAX_NUM_SEQS` override either; lowering the context is the cheapest way to free KV memory |
 | `--max-num-batched-tokens 8192` | 8192 | Prefill batch budget from the fork's public profiles |
+| `--block-size 2048` / `--mamba-block-size 8192` | 2048 / 8192 | Attention and mamba cache page alignment from the fork's Qwen3.8 long-prefill profile |
 | `--kv-cache-dtype fp8_e5m2` | fp8_e5m2 | Halves KV memory vs FP16; the fork's E5M2 V100 KV path also enables the bounded short-context decode CUDA graph (8192 tokens) |
 | `--attention-backend FLASH_ATTN_V100` | — | 1Cat-vLLM's SM70 attention path (decode + prefill) — the reason this fork exists |
 | `--tool-call-parser qwen3_coder` / `--enable-auto-tool-choice` | — | OpenAI-compatible tool calling |
@@ -197,7 +199,7 @@ Some defaults are applied automatically by the fork at startup and need no flags
 | `enable_prefix_caching` / `mamba_cache_mode=align` | on / align | SM70 serving default for hybrid (linear-attention) models; prefix cache reuse requires the mamba cache to align with the attention pages |
 | `VLLM_SM70_RMSNORM_GATED_EXACT` | 1 | Fork default for the no-MTP profile (`config/vllm.py`): native FP32 gated-RMSNorm arithmetic. Set `VLLM_SM70_RMSNORM_GATED_EXACT=0` in the env file for the fused FP16 path |
 | `VLLM_SM70_FP8_KV_DECODE_CONTEXT_BUCKETS` | 8192 | Bounds the FP8-KV short-context decode graph so the short D256 GQA graph stays scalar-only |
-| compile-graph policy | `VLLM_COMPILE`, cudagraph `FULL_AND_PIECEWISE`, capture `(1,2,4,8,16)` | The fork's SM70 compile-graph policy for this profile |
+| compile-graph policy | `VLLM_COMPILE`, cudagraph `FULL_AND_PIECEWISE`, capture `(1,2,4,8,16,32)` | The fork's SM70 compile-graph policy for this profile |
 
 MTP speculative decoding is opt-in and not part of this profile: set `VLLM_1CAT_ENABLE_SM70_MTP_DEFAULTS=1` or pass an explicit `--speculative-config`.
 
