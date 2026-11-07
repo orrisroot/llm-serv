@@ -136,18 +136,12 @@ Against the same host's `vllm-v100x2-qwen3.8-27b` example (Qwen3.8 27B FP8, vLLM
 single-stream decode 38.8 tok/s → **about 2.2× here**, prefill 1,770 tok/s at a cold 9k prompt →
 2,130 (3.9k) to 3,535 (30.9k) tok/s here.
 
-The [sfnx example](../sfnx-v100x3-qwen3.8-flash-next/) (UD-Q4_K_XL) on the same host measured under
-the same harness: decode 4k **156.9** tok/s (single stream), decode 262k **96.5** tok/s, 262k prefill
-1,907 tok/s, 6-way aggregate **138** tok/s (p50 6.6 s). Strata wins long-prompt prefill (3,257 vs
-1,907 tok/s); sFNX wins decode and concurrency.
-
 ## Tuned settings
 
 The run config (`$HOME/.local/share/strata/install/strata-*.json`) carries these; on another
 V100 box add them to the setup launch with `--set KEY=VALUE`:
 
-- `"parallel": 6` — six decode slots, matching the sfnx example's six lanes for the comparison rows
-  above. The default is 1 (single-stream decode 80.8 tok/s at 4k).
+- `"parallel": 6` — six decode slots. The default is 1 (single-stream decode 80.8 tok/s at 4k).
 - `--prefill-pipe 1024` — prompt chunk pipelining on the layer split: 4k prefill +41% over default.
 - `env`: `STRATA_SM70_TABLE=1`, `STRATA_PF_WMMA=1`, `STRATA_PF_WMMA2=1`,
   `STRATA_Q8_GATHER_WIDE=0`, `STRATA_GDN_REC_WARP=2`, `STRATA_ARGMAX_ROWS_SM70=1`,
