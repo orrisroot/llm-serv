@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instance identity, derived from where this script is installed:
+# /opt/llm-serv/<instance>/run
+INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE="$(basename -- "${INSTANCE_DIR}")"
+
+# Strata Terminal, installed for the service account (see README). The unit
+# sets HOME=/var/lib/llm-serv/<instance>; the installer puts `strata` in
+# $HOME/.local/bin.
+STRATA_BIN="${HOME}/.local/bin/strata"
+if [[ ! -x "${STRATA_BIN}" ]]; then
+  echo "Error: ${STRATA_BIN} not found — install the Strata Terminal for the" >&2
+  echo "llm-serv account first (see examples/strata-v100x3-qwen3.8-flash-next/README.md)." >&2
+  exit 1
+fi
+
+# Load environment configuration file if present
+ENV_FILE="/etc/llm-serv/${INSTANCE}.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+fi
+
+# The API key is read from the environment (exported above), never passed on
+# the command line, so it stays out of `ps` output. `strata serve` picks up
+# STRATA_API_KEY; the one-time setup launch must therefore run with
+# --no-api-key (see README).
+if [[ -z "${STRATA_API_KEY:-}" ]]; then
+  echo "Error: STRATA_API_KEY is not set (put it in /etc/llm-serv/${INSTANCE}.env)." >&2
+  exit 1
+fi
+
+# Prepared run config, written by the one-time `strata launch` documented in
+# the README. Launch state lives under $HOME/.local/share/strata/install/;
+# override STRATA_PROFILE in the env file for a different instance.
+INSTALL_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/strata/install"
+STRATA_PROFILE="${STRATA_PROFILE:-$(ls "${INSTALL_DIR}"/strata-*.json 2>/dev/null | head -1 || true)}"
+if [[ -z "${STRATA_PROFILE}" || ! -f "${STRATA_PROFILE}" ]]; then
+  echo "Error: run config not found under ${INSTALL_DIR} — run the one-time" >&2
+  echo "`strata launch` setup first (see the example README)." >&2
+  exit 1
+fi
+
+# Listen address; both may be overridden from the env file
+HOST="${LLM_SERV_HOST:-0.0.0.0}"
+PORT="${LLM_SERV_PORT:-8000}"
+
+# Foreground server: systemd-friendly. `strata launch --no-tui` daemonizes and
+# would defeat the unit's process management; `strata serve` stays in the
+# foreground, writes lifecycle events to stdout and drains on SIGTERM.
+exec "${STRATA_BIN}" serve --profile "${STRATA_PROFILE}" --port "${PORT}" --output jsonl
