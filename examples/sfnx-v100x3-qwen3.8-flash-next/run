@@ -16,11 +16,20 @@ if [[ -f "${ENV_FILE}" ]]; then
 fi
 
 # sFNX checkout: config paths are relative to it, so run from there.
-FNX_HOME="${SFNX_HOME:-/opt/sfnx}"
+FNX_HOME="${SFNX_HOME:-/opt/llm-serv/sfnx/engine}"
 if [[ ! -x "${FNX_HOME}/.venv/bin/python" ]]; then
   echo "Error: ${FNX_HOME}/.venv/bin/python not found — build sFNX first (see the example README)." >&2
   exit 1
 fi
+
+# The engine and vision binaries link the llama.cpp build tree's shared libraries
+# (libmtmd.so.0, libggml*.so.0, libllama.so.0, ...); the config's lib_dirs does not
+# name that directory, so put it on the loader path here.
+export LD_LIBRARY_PATH="${FNX_HOME}/llama.cpp/build/bin${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+# libmtmd bakes build-time absolute paths in as defaults; point the expert-use
+# profile at this checkout's copy explicitly (a missing profile aborts startup).
+export FNX_EXPERT_PROFILE="${FNX_EXPERT_PROFILE:-${FNX_HOME}/data/expert-routes.bin}"
 
 # The API key comes from the environment (exported above), never a flag.
 if [[ -z "${STRATA_API_KEY:-}" ]]; then
@@ -32,9 +41,23 @@ fi
 HOST="${LLM_SERV_HOST:-0.0.0.0}"
 PORT="${LLM_SERV_PORT:-8000}"
 
+# API-exposed model name (health, /v1/models, response "model"). Override it by
+# setting MODEL_NAME in the env file; default: qwen3.8-flash-next.
+MODEL_NAME="${MODEL_NAME:-qwen3.8-flash-next}"
+
 # Foreground server (the front end is Strata's serve, MIT, forked as `front`):
 # systemd-friendly, drains on SIGTERM. Config holds the model and engine flags.
 CONFIG="${SFNX_CONFIG:-${FNX_HOME}/serve/sfnx.json}"
+# The front reads model_name from the config only, so merge MODEL_NAME into a
+# per-instance copy at start; the engine's own config stays untouched.
+MERGED_CFG="${MERGED_CFG:-${HOME}/llm-serv-${INSTANCE}-sfnx.json}"
+export CONFIG MERGED_CFG MODEL_NAME
+"${FNX_HOME}/.venv/bin/python" - <<'PY'
+import json, os
+cfg = json.load(open(os.environ["CONFIG"]))
+cfg["model_name"] = os.environ["MODEL_NAME"]
+json.dump(cfg, open(os.environ["MERGED_CFG"], "w"))
+PY
 cd "${FNX_HOME}"
-exec "${FNX_HOME}/.venv/bin/python" -m front.server --engine sfnx --config "${CONFIG}" \
+exec "${FNX_HOME}/.venv/bin/python" -m front.server --engine sfnx --config "${MERGED_CFG}" \
   --host "${HOST}" --port "${PORT}"

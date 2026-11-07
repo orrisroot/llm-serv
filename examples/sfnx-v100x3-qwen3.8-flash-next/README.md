@@ -7,8 +7,7 @@ Its sums between cards run inside the window's CUDA graph around a ring, which i
 pay off without NVLink. The serving front end is a fork of Strata's `serve` (web UI, OpenAI/Anthropic/
 Responses APIs, tools, pictures).
 
-Validated on a 3× V100-32GB host, the same class of box as the
-[Strata example](../strata-v100x3-qwen3.8-flash-next/) beside it.
+Validated on a 3× V100-32GB host (PCIe, no NVLink).
 
 ## Assumptions
 
@@ -27,7 +26,7 @@ Validated on a 3× V100-32GB host, the same class of box as the
 git clone https://github.com/johnfink8/sfnx.git && cd sfnx
 # llama.cpp at the pinned commit, as ./llama.cpp
 git clone https://github.com/ggml-org/llama.cpp.git llama.cpp   # then fetch+checkout a37cc46
-ln -s /path/to/models models            # UD-Q4_K_XL/ + mmproj-F16.gguf
+ln -s /opt/llm-serv/models/sfnx models   # shared store (or /path/to/models)
 curl -LsSf https://astral.sh/uv/install.sh | sh        # for the front venv and hf downloads
 uv python install 3.14
 uv venv --python 3.14 .venv
@@ -53,13 +52,17 @@ This directory is the `llm-serv` instance template (`run`, `env.example`, plus `
 `stress.py` for measurements):
 
 - `/opt/llm-serv/sfnx/run` ← this `run`
-- `/etc/llm-serv/sfnx.env` ← `env.example` (`LLM_SERV_HOST`, `LLM_SERV_PORT`, `STRATA_API_KEY`)
-- `systemctl enable --now llm-serv@sfnx` (the checkout must be owned by the service account; the
-  config's paths are relative to `${SFNX_HOME}`)
+- `/etc/llm-serv/sfnx.env` ← `env.example` (`LLM_SERV_HOST`, `LLM_SERV_PORT`, `STRATA_API_KEY`,
+  `MODEL_NAME`)
+- `systemctl enable --now llm-serv@sfnx` — the checkout lives at `${SFNX_HOME}` (default
+  `/opt/llm-serv/sfnx/engine`), must be owned by the service account, and its `models/` link points
+  into the shared `/opt/llm-serv/models/` store; the config's paths are relative to it.
+  Keep that store on the fastest disk available (the engine reads weights from it while decoding).
 
 `run` starts the front server in the foreground (so `llm-serv@` manages it), reading the API key from
-the env file. The unit template already raises `LimitMEMLOCK=infinity`, which sFNX needs for its
-host-side tables.
+the env file. The API-exposed model name comes from `MODEL_NAME` in the env file (default
+`qwen3.8-flash-next`; `run` merges it into a per-instance copy of the engine config at start). The
+unit template already raises `LimitMEMLOCK=infinity`, which sFNX needs for its host-side tables.
 
 Or use the project's own unit: `make install` (a port-8080 unit) or `serve/run.sh serve/sfnx.json`
 (the project's transient test unit, port 8095) — one at a time, since the engines share the GPUs. This
@@ -74,20 +77,14 @@ example uses the direct `front.server` invocation in `run` so the llm-serv templ
 - Size `--conversation-cache-mib` to the host's RAM — the parked-conversation cache shares host
   memory (8 GiB is a good fit for a 128 GB-class host).
 
-## Benchmarks (same host as the Strata example; `bench.py`/`stress.py`, greedy, reasoning off)
+## Benchmarks (`bench.py`/`stress.py`, greedy, reasoning off)
 
 | Workload | sFNX (UD-Q4_K_XL) |
 | --- | --- |
 | Prompt read 3.9k | ~2,800 tok/s (TTFT ≈1.4 s) |
-| Prompt read 30.9k | ~3,830 tok/s |
-| Prompt read ~262k (max) | ~1,900 tok/s (TTFT ≈137 s) |
+| Prompt read 30.9k | ~3,840 tok/s (TTFT ≈8.1 s) |
+| Prompt read ~262k (max) | ~2,600 tok/s (TTFT ≈100 s) |
 | Decode 4k ctx (single stream) | ~157 tok/s |
-| Decode 32k ctx | ~149 tok/s |
-| Decode 262k ctx (max) | ~97 tok/s |
-| 6 concurrent (1k prompt, 128 out) | ~138 tok/s aggregate, p50 6.6 s |
-
-Against the Strata example on the same host (IQ3_S, 3-GPU layer split, parallel 6 for the
-concurrency row): decode **~2.6×** single stream, prompt read 4k +31%, 262k prefill −42%
-(1,907 vs 3,257 tok/s), aggregate 6-way +9% (127 → 138 tok/s), p50 latency 10.2 s → 6.6 s.
-The model pack is also the more precise one of the two (same-top vs a Q8 reference: 93.1% for
-UD-Q4_K_XL against 87.7% for IQ3_S).
+| Decode 32k ctx | ~142 tok/s |
+| Decode 262k ctx (max) | ~95 tok/s |
+| 6 concurrent (1k prompt, 128 out) | ~153 tok/s aggregate, p50 7.7 s |

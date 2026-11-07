@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal OpenAI-compatible benchmark for an llm-serv inference server.
+"""Minimal OpenAI-compatible benchmark for the Strata server on this host.
 
 Measures, per one request:
   - prompt tokens/s  = prompt_tokens / TTFT        (prefill speed)
@@ -12,8 +12,10 @@ Usage:
                    --effort none
 """
 import argparse
+import base64
 import json
 import random
+import sys
 import time
 import urllib.request
 
@@ -21,10 +23,10 @@ WORDS = ("The quick brown fox jumps over the lazy dog near the river bank "
          "while a curious cat watches from a sunny windowsill").split()
 
 
-def make_prompt(n_tokens: int) -> str:
+def make_prompt(n_tokens: int, seed: int) -> str:
     # ~0.75 tokens per word for English; pad generously.
     words = []
-    rng = random.Random(42)
+    rng = random.Random(seed)
     while len(words) < int(n_tokens * 0.9):
         words.append(rng.choice(WORDS))
     return " ".join(words)
@@ -41,6 +43,8 @@ def stream_chat(url: str, api_key: str, model: str, prompt: str, max_tokens: int
     }
     if effort:
         body["reasoning_effort"] = effort
+    body["strata_checkpoint"] = False  # one-shot: no checkpoint reuse, clean prefill timing
+    start = time.monotonic()
     req = urllib.request.Request(
         url + "/chat/completions",
         data=json.dumps(body).encode(),
@@ -49,9 +53,9 @@ def stream_chat(url: str, api_key: str, model: str, prompt: str, max_tokens: int
             "Authorization": f"Bearer {api_key}",
         },
     )
+    ttft = None
+    output_chars = 0
     with urllib.request.urlopen(req, timeout=600) as resp:
-        start = time.monotonic()
-        ttft = None
         for raw in resp:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -63,17 +67,19 @@ def stream_chat(url: str, api_key: str, model: str, prompt: str, max_tokens: int
                 chunk = json.loads(payload)
             except json.JSONDecodeError:
                 continue
-            now = time.monotonic()
-            if ttft is None:
-                ttft = now - start
+            # Skip keep-alive chunks (no content, no finish).
             choices = chunk.get("choices") or []
+            has_content = False
             for ch in choices:
                 delta = ch.get("delta") or {}
                 txt = delta.get("content") or delta.get("reasoning_content") or ""
                 if txt:
-                    del txt  # characters are not tokens; usage comes later
+                    has_content = True
+                    output_chars += len(txt)
+            if ttft is None and (has_content or any(ch.get("finish_reason") for ch in choices)):
+                ttft = time.monotonic() - start
         total = time.monotonic() - start
-    return ttft, total
+    return ttft, total, output_chars
 
 
 def main():
@@ -88,17 +94,20 @@ def main():
     ap.add_argument("--effort", default="none",
                     help="reasoning_effort: none|low|medium|high")
     ap.add_argument("--warmup", type=int, default=1)
+    ap.add_argument("--seed", type=int, default=None,
+                    help="prompt seed (default: random => cache miss)")
     args = ap.parse_args()
 
-    prompt = make_prompt(args.prompt_tokens)
+    seed = args.seed if args.seed is not None else random.randrange(1, 1 << 30)
+    prompt = make_prompt(args.prompt_tokens, seed)
     # warmup (also loads the model / builds caches)
     for _ in range(args.warmup):
         stream_chat(args.url, args.key, args.model, "hi", 8, args.effort)
 
     results = []
     for i in range(args.rounds):
-        ttft, total = stream_chat(args.url, args.key, args.model, prompt,
-                                  args.output_tokens, args.effort)
+        ttft, total, _ = stream_chat(args.url, args.key, args.model, prompt,
+                                     args.output_tokens, args.effort)
         # token counts come from a second, non-streaming call to keep it cheap:
         results.append((ttft, total))
 
@@ -122,14 +131,18 @@ def main():
         usage = json.load(resp)["usage"]
     ptok = usage["prompt_tokens"]
     ctok = usage["completion_tokens"]
+    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
 
-    print(f"prompt_tokens={ptok} completion_tokens={ctok}")
+    print(f"prompt_tokens={ptok} completion_tokens={ctok} cached={cached}")
     for i, (ttft, total) in enumerate(results):
+        if ttft is None:
+            print(f"round {i+1}: no content observed")
+            continue
         pps = ptok / ttft if ttft else float("nan")
         dts = ctok / max(total - ttft, 1e-6)
         print(f"round {i+1}: TTFT={ttft:.2f}s total={total:.2f}s "
               f"prompt={pps:.0f} tok/s decode={dts:.1f} tok/s")
-    good = [(r[0], r[1]) for r in results]
+    good = [r for r in results if r[0] is not None]
     if good:
         ttft = min(t for t, _ in good)
         total = sum(t for _, t in good) / len(good)
