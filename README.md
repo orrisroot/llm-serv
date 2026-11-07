@@ -56,6 +56,12 @@ examples/                               ← Reference configurations, meant to b
     env.example                           Environment file template
     bench.py                              Prompt / decode speed probe
     stress.py                             Concurrent-throughput probe
+  sfnx-v100x3-qwen3.8-flash-next/
+    README.md                             Assumptions, benchmarks, and rationale
+    run                                   Launch script
+    env.example                           Environment file template
+    bench.py                              Prompt / decode speed probe
+    stress.py                             Concurrent-throughput probe
 ```
 
 Every file under `etc/` is installed to the identical path on the host, and holds the engine-independent base. Engine-specific pieces live under `examples/` and are copied into place at deploy time.
@@ -230,5 +236,6 @@ The journal only records service start/stop events; inference server output is n
 | [`examples/vllm-v100x2-qwen3.8-27b`](examples/vllm-v100x2-qwen3.8-27b) | vLLM (`1Cat-vLLM` fork) | V100 32GB ×2 / CUDA 12.8 | Qwen3.8 27B (FP8) |
 | [`examples/sglang-v100x2-qwen3.8-27b`](examples/sglang-v100x2-qwen3.8-27b) | SGLang (`sglang-V100` fork) | V100 32GB ×2 / CUDA 12.8 | Qwen3.8 27B (FP8) |
 | [`examples/strata-v100x3-qwen3.8-flash-next`](examples/strata-v100x3-qwen3.8-flash-next) | Strata (CUDA 12 engine, layer split) | V100 32GB ×3 / driver 580 | Qwen3.8-Flash-Next (IQ3_S MoE) |
+| [`examples/sfnx-v100x3-qwen3.8-flash-next`](examples/sfnx-v100x3-qwen3.8-flash-next) | sFNX (every-layer split) | V100 32GB ×3 / CUDA 12.9 | Qwen3.8-Flash-Next (UD-Q4_K_XL) |
 | [`examples/vllm-rtx3090tix2-qwen3.8-27b`](examples/vllm-rtx3090tix2-qwen3.8-27b) | vLLM (`vllm-backport` fork) | RTX 3090 Ti ×2 (Ampere) / CUDA 13.x | Qwen3.8 27B (AWQ W4A16, Marlin W4A16) |
 | [`examples/vllm-h100x1-qwen3.8-27b`](examples/vllm-h100x1-qwen3.8-27b) | vLLM (stock pip wheel) | H100 80GB ×1 (Hopper sm_90) / CUDA 13.4 | Qwen3.8 27B (FP8) |

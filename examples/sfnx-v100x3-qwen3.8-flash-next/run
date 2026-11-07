@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Instance identity, derived from where this script is installed:
+# /opt/llm-serv/<instance>/run
+INSTANCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INSTANCE="$(basename -- "${INSTANCE_DIR}")"
+
+# Load environment configuration file if present
+ENV_FILE="/etc/llm-serv/${INSTANCE}.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+fi
+
+# sFNX checkout: config paths are relative to it, so run from there.
+FNX_HOME="${SFNX_HOME:-/opt/sfnx}"
+if [[ ! -x "${FNX_HOME}/.venv/bin/python" ]]; then
+  echo "Error: ${FNX_HOME}/.venv/bin/python not found — build sFNX first (see the example README)." >&2
+  exit 1
+fi
+
+# The API key comes from the environment (exported above), never a flag.
+if [[ -z "${STRATA_API_KEY:-}" ]]; then
+  echo "Error: STRATA_API_KEY is not set (put it in /etc/llm-serv/${INSTANCE}.env)." >&2
+  exit 1
+fi
+
+# Listen address; both may be overridden from the env file
+HOST="${LLM_SERV_HOST:-0.0.0.0}"
+PORT="${LLM_SERV_PORT:-8000}"
+
+# Foreground server (the front end is Strata's serve, MIT, forked as `front`):
+# systemd-friendly, drains on SIGTERM. Config holds the model and engine flags.
+CONFIG="${SFNX_CONFIG:-${FNX_HOME}/serve/sfnx.json}"
+cd "${FNX_HOME}"
+exec "${FNX_HOME}/.venv/bin/python" -m front.server --engine sfnx --config "${CONFIG}" \
+  --host "${HOST}" --port "${PORT}"
